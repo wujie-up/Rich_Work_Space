@@ -1,0 +1,44 @@
+node_modules/
+/build/
+**/dist/
+.test-results/
+*.log
+.DS_Store
+
+# Local development evidence contains machine paths and session details.
+/docs/superpowers/
+/docs/*verification.md
+
+# Credentials, local configuration and runtime data.
+.env
+.env.*
+!.env.example
+!.env.*.example
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.db
+*.sqlite
+*.sqlite3
+/data/
+/backups/
+coverage/
+playwright-report/
+test-results/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Installer exports and local build/debug leftovers.
+*.dmg
+*.plg
+*.app/
+.cache/
+*.tsbuildinfo
+*.tmp
+*.bak
+*.orig

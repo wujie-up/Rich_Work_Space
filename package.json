@@ -1,0 +1,36 @@
+{
+  "name": "work-desk",
+  "version": "0.1.5",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "A local desktop host for isolated domain plugins",
+  "main": "desk/src/main/common/main.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node desk/build/build.mjs",
+    "start": "npm run build && electron .",
+    "test": "node --test desk/test/*.test.js plugins/plugins/*/test/*.test.js",
+    "test:electron": "node --test --test-concurrency=1 desk/test/electron/*.test.js plugins/plugins/*/test/electron/*.test.js",
+    "postinstall": "electron-builder install-app-deps",
+    "dist:mac": "npm run build && electron-builder --config desk/build/electron-builder.yml --mac --arm64",
+    "build:desk": "node desk/build/build.mjs --desk-only",
+    "test:desktop-ui": "npm run build:desk && node --test desk/test/electron/desktop-ui.test.js",
+    "pack:plugin": "node desk/build/pack-plugin.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "node-pty": "1.1.0",
+    "tar": "7.5.22"
+  },
+  "devDependencies": {
+    "electron": "45.0.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "playwright": "1.64.1"
+  }
+}

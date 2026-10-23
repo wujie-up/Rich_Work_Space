@@ -1,0 +1,33 @@
+appId: local.workdesk.desktop
+productName: Work Desk
+directories:
+  output: desk/dist/releases
+electronDist: node_modules/electron/dist
+files:
+  - desk/src/main/**
+  - desk/src/shared/**
+  - desk/src/preload.cjs
+  - desk/dist/renderer/**
+  - plugins/plugins/**
+  - package.json
+asar: true
+asarUnpack:
+  - node_modules/node-pty/**
+mac:
+  category: public.app-category.developer-tools
+  identity: null
+  target:
+    - dmg
+    - zip
+  artifactName: '${productName}-${version}-${arch}.${ext}'
+dmg:
+  sign: false
+  title: Work Desk
+  contents:
+    - x: 150
+      y: 180
+      type: file
+    - x: 440
+      y: 180
+      type: link
+      path: /Applications
