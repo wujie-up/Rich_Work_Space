@@ -317,3 +317,71 @@ test('force disable interrupts a stuck graceful transition instead of leaving it
   assert.equal(plugins.loaded.has('stuck-stop-hook'), false);
   assert.equal(plugins.operations.has('stuck-stop-hook'), false);
 });
+
+
+test('close archives tasks and stops the runtime while keeping the plugin enabled and reopenable', async t => {
+  const events = [];
+  const { plugins, storage } = await setup(t, 'test-agent', { emit: (channel, value) => events.push([channel, value]) });
+  await plugins.invoke('test-agent', 'tasks.create', ['retained task']);
+  const runtime = plugins.loaded.get('test-agent');
+  const preview = await plugins.preview('test-agent', 'close');
+  await plugins.close('test-agent', preview.confirmationToken);
+  assert.equal(runtime.closed, true);
+  assert.equal(plugins.loaded.has('test-agent'), false);
+  assert.equal(plugins.record('test-agent').state, 'enabled');
+  assert.equal((await storage.readJson('plugins.json'))[0].state, 'enabled');
+  assert.deepEqual(await storage.readJson('plugin-data/test-agent/closed.json'), {
+    reason: 'close', tasks: [{ id: '0', name: 'retained task' }]
+  });
+  assert.ok(events.some(([channel, value]) => channel === 'plugins.closed' && value.pluginId === 'test-agent'));
+  assert.equal(await plugins.invoke('test-agent', 'tasks.ping'), 'pong');
+});
+
+test('force close interrupts a frozen plugin without disabling it or clearing saved data', async t => {
+  const { plugins, storage } = await setup(t);
+  await storage.writeJson('plugin-data/test-agent/retained.json', { history: ['kept'] });
+  const runtime = plugins.loaded.get('test-agent');
+  const hanging = plugins.invoke('test-agent', 'tasks.hang').catch(error => error.code);
+  await delay(50);
+  await plugins.forceClose('test-agent');
+  assert.equal(await hanging, 'PLUGIN_UNAVAILABLE');
+  assert.equal(runtime.closed, true);
+  assert.equal(plugins.record('test-agent').state, 'enabled');
+  assert.deepEqual(await storage.readJson('plugin-data/test-agent/retained.json'), { history: ['kept'] });
+  assert.equal(await plugins.invoke('test-agent', 'tasks.ping'), 'pong');
+});
+
+
+test('force close interrupts a stuck close callback and retains enabled state', async t => {
+  const { plugins, storage } = await setup(t);
+  const source = await fixture(storage, 'stuck-close-hook');
+  await writeFile(join(source, 'index.mjs'), implementation.replace('stop:async(reason)=>{', 'stop:async(reason)=>{while(true){};'));
+  await plugins.install(source);
+  const preview = await plugins.preview('stuck-close-hook', 'close');
+  const closing = plugins.close('stuck-close-hook', preview.confirmationToken).catch(error => error.code);
+  await delay(100);
+  await plugins.forceClose('stuck-close-hook');
+  assert.equal(await closing, 'PLUGIN_UNAVAILABLE');
+  assert.equal(plugins.record('stuck-close-hook').state, 'enabled');
+  assert.equal(plugins.loaded.has('stuck-close-hook'), false);
+  assert.equal(plugins.operations.has('stuck-close-hook'), false);
+});
+
+
+test('force close during lazy activation keeps the plugin enabled after activation drains', async t => {
+  const { plugins, storage } = await setup(t);
+  const source = await fixture(storage, 'frozen-lazy');
+  await writeFile(join(source, 'plugin.json'), JSON.stringify({ id: 'frozen-lazy', name: 'Lazy', version: '1.0.0',
+    apiVersion: 2, dataVersion: 1, main: 'index.mjs', loadOnStartup: false }));
+  await writeFile(join(source, 'index.mjs'), 'export function activate() { while (true) {} }');
+  await plugins.install(source);
+  const activating = plugins.invoke('frozen-lazy', 'tasks.ping').catch(error => error.code);
+  for (let attempt = 0; attempt < 200 && !plugins.recovering.has('frozen-lazy'); attempt++) {
+    await delay(10);
+  }
+  await plugins.forceClose('frozen-lazy');
+  assert.equal(await activating, 'PLUGIN_UNAVAILABLE');
+  assert.equal(plugins.record('frozen-lazy').state, 'enabled');
+  assert.equal(plugins.loaded.has('frozen-lazy'), false);
+  assert.equal(plugins.recovering.has('frozen-lazy'), false);
+});

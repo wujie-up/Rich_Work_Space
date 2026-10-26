@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "production_database": {
+      "command": "/absolute/path/to/node",
+      "args": [
+        "/absolute/path/to/metabase/server.mjs"
+      ],
+      "env": {
+        "METABASE_URL": "https://bi.dbaifin.com",
+        "METABASE_SESSION": "REPLACE_LOCALLY_DO_NOT_COMMIT"
+      }
+    }
+  }
+}

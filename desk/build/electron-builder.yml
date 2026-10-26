@@ -1,28 +1,31 @@
 appId: local.workdesk.desktop
-productName: Work Desk
+productName: DeckPg
 directories:
-  output: desk/dist/releases
+  output: desk/dist/releases.noindex
 electronDist: node_modules/electron/dist
 files:
   - desk/src/main/**
   - desk/src/shared/**
   - desk/src/preload.cjs
   - desk/dist/renderer/**
-  - plugins/plugins/**
+  - desk/dist/plugins/**
   - package.json
+afterAllArtifactBuild: desk/build/check-mac-installation.mjs
 asar: true
 asarUnpack:
   - node_modules/node-pty/**
 mac:
+  icon: desk/src/main/os/mac/resource/app.icns
   category: public.app-category.developer-tools
-  identity: null
+  identity: '-'
+  hardenedRuntime: false
   target:
     - dmg
     - zip
-  artifactName: '${productName}-${version}-${arch}.${ext}'
+  artifactName: 'DeckPg-${version}-${arch}.${ext}'
 dmg:
   sign: false
-  title: Work Desk
+  title: DeckPg
   contents:
     - x: 150
       y: 180

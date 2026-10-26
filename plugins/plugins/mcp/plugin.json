@@ -1,6 +1,0 @@
-{
-  "id": "mcp-services", "name": "MCP 服务", "version": "0.2.1", "apiVersion": 2, "dataVersion": 1,
-  "type": "application", "showIcon": true, "loadOnStartup": true, "background": "service",
-  "main": "src/main/common/index.js", "renderer": "src/renderer/app.js",
-  "description": "配置远程 MCP 地址与密钥，启用后自动向 AI 提供工具；兼容本地服务。", "capabilities": ["mcp-services", "agent-launch-config"]
-}

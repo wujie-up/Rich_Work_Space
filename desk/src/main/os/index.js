@@ -3,4 +3,4 @@ if (!platforms[process.platform]) {
   throw Error(`暂不支持的操作系统：${process.platform}`);
 }
 const platform = await import(platforms[process.platform]);
-export const { loadLoginPath, stopProcessGroups, windowOptions, hideOnClose } = platform;
+export const { loadLoginPath, stopProcessGroups, windowOptions, hideOnClose, ensureInstallation } = platform;

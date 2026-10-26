@@ -1,0 +1,30 @@
+{
+  "id": "work-flow",
+  "icon": "ico/icon.svg",
+  "name": "工作流编排",
+  "version": "0.5.2",
+  "type": "application",
+  "showIcon": true,
+  "loadOnStartup": false,
+  "background": "service",
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "main": "src/main/common/index.js",
+  "capabilities": [
+    "work-flow"
+  ],
+  "description": "按功能分类选择基础能力，配置数据输入、处理、AI 任务、输出与人工确认工作流。",
+  "renderer": "src/renderer/app.js",
+  "views": [
+    {
+      "id": "editor",
+      "title": "工作流编排",
+      "entry": "dist/renderer/index.html"
+    }
+  ],
+  "closeDescription": "关闭最后一个窗口会停止消息监听和运行中的工作流，保留连接、登录会话、待执行队列及运行历史；已领取的中断消息需核对后手动重试。",
+  "requiredHostFeatures": [
+    "desk.capabilities.v1"
+  ],
+  "singleInstance": false
+}

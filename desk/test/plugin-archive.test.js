@@ -17,9 +17,9 @@ test('gzip tar .plg round trip preserves plugin files and existing data', async 
   await packPackage(source, archive);
   assert.deepEqual([...(await readFile(archive)).subarray(0, 2)], [31, 139]);
   await importPackage(storage, archive);
-  assert.equal((await storage.readJson('packages/test-agent/plugin.json')).id, 'test-agent');
+  assert.equal((await storage.readJson('plugins/test-agent/plugin.json')).id, 'test-agent');
   assert.deepEqual(await storage.readJson('plugin-data/test-agent/history.json'), { retained: true });
-  assert.equal(await readFile(join(storage.root, 'packages/test-agent/index.mjs'), 'utf8'), await readFile(join(source, 'index.mjs'), 'utf8'));
+  assert.equal(await readFile(join(storage.root, 'plugins/test-agent/index.mjs'), 'utf8'), await readFile(join(source, 'index.mjs'), 'utf8'));
 });
 
 test('archives reject traversal, links, corrupt content and incorrect suffix', async (t) => {

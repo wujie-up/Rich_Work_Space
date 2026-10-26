@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { fail } from '../../shared/contracts.js';
@@ -7,6 +8,9 @@ import { stopProcessGroups } from '../os/index.js';
 export class PluginRuntime {
   constructor({ id, directory, storage, emit, onFailure, serviceRequest, timeout = 30000 }) {
     Object.assign(this, { id, emit, onFailure, serviceRequest, timeout });
+    this.instanceId = randomUUID();
+    this.services = [];
+    this.capabilityPending = new Map();
     this.pending = new Map();
     this.sequence = 0;
     this.ownedPids = new Set();
@@ -36,11 +40,20 @@ export class PluginRuntime {
       return;
     }
     if (message.type === 'service.request') {
-      const parent = this.pending.get(message.parentId)?.context;
+      const parent = this.pending.get(message.parentId)?.context || this.capabilityPending.get(message.parentId)?.context;
       Promise.resolve().then(() => this.serviceRequest(message, parent, this)).then(
         (value) => this.sendServiceResult({ requestId: message.requestId, value }),
         (error) => this.sendServiceResult({ requestId: message.requestId,
           error: { code: error.code || 'SERVICE_ERROR', message: error.message } }));
+      return;
+    }
+    if (message.type === 'capability.result') {
+      const request = this.capabilityPending.get(message.invocationId);
+      if (request) {
+        this.capabilityPending.delete(message.invocationId);
+        clearTimeout(request.timer);
+        message.error ? request.reject(Object.assign(Error(message.error.message), message.error)) : request.resolve(message.value);
+      }
       return;
     }
     if (message.type === 'resources') {
@@ -97,6 +110,38 @@ export class PluginRuntime {
     });
   }
 
+  // Capability deadlines belong to the broker and never trip the ordinary RPC watchdog.
+  executeCapability(input, context) {
+    if (this.closed) {
+      return Promise.reject(fail('PROVIDER_UNAVAILABLE', '插件进程不可用'));
+    }
+    return new Promise((resolve, reject) => {
+      // Release host bookkeeping at the deadline even when a handler ignores cancellation.
+      const timer = setTimeout(() => {
+        this.capabilityPending.delete(context.invocationId);
+        reject(fail('CALL_TIMEOUT', '能力调用超时，外部操作可能仍已执行'));
+      }, Math.max(1, context.deadline - Date.now()));
+      timer.unref?.();
+      this.capabilityPending.set(context.invocationId, { resolve, reject, context, timer });
+      const { signal, ...wire } = context;
+      this.child.send({ type: 'capability.invoke', input, context: wire }, error => {
+        if (error) { this.fail(error); }
+      });
+    });
+  }
+
+  cancelCapability(invocationId) {
+    if (!this.closed && this.child.connected) {
+      this.child.send({ type: 'capability.cancel', invocationId });
+    }
+  }
+
+  notifyCapability(value) {
+    if (!this.closed && this.child.connected) {
+      this.child.send({ type: 'capability.event', value });
+    }
+  }
+
   fail(error) {
     if (this.closed) {
       return;
@@ -117,6 +162,11 @@ export class PluginRuntime {
       pending.reject(error);
     }
     this.pending.clear();
+    for (const request of this.capabilityPending.values()) {
+      clearTimeout(request.timer);
+      request.reject(error);
+    }
+    this.capabilityPending.clear();
     this.child.kill('SIGKILL');
     this.cleanup = stopProcessGroups([...this.ownedPids]);
     this.cleanup.catch((error) => {

@@ -1,10 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { temporaryStore, fixture } from './helpers.js';
 import { inspectPackage } from '../src/main/common/plugin-package.js';
 import { Plugins } from '../src/main/common/plugins.js';
+import { pluginProperties } from '../src/main/common/plugin-manifest.js';
+
+test('close description stays plugin-owned, plain text and bounded at the manifest boundary', () => {
+  const manifest = { type: 'resource', showIcon: false, background: 'none', closeDescription: '<保留数据>' };
+  assert.equal(pluginProperties(manifest).closeDescription, '<保留数据>');
+  assert.throws(() => pluginProperties({ ...manifest, closeDescription: {} }), /closeDescription/);
+  assert.throws(() => pluginProperties({ ...manifest, closeDescription: '字'.repeat(241) }), /closeDescription/);
+});
 
 async function source(t, properties) {
   const storage = await temporaryStore(t);
@@ -25,6 +33,16 @@ test('legacy manifests keep their application and persistent startup defaults', 
   const manifest = await inspectPackage(directory);
   assert.deepEqual([manifest.type, manifest.showIcon, manifest.loadOnStartup, manifest.background],
     ['application', true, true, 'service']);
+});
+
+test('close preview returns plugin wording without changing task confirmation semantics', async t => {
+  const closeDescription = '停止任务，保留记录。';
+  const { directory, plugins } = await source(t, { closeDescription });
+  await plugins.install(directory);
+  const preview = await plugins.preview('test-agent', 'disable');
+  assert.equal(preview.closeDescription, closeDescription);
+  await plugins.disable('test-agent', preview.confirmationToken);
+  assert.equal(plugins.record('test-agent').state, 'disabled');
 });
 
 test('resource and pure UI packages have no backend and survive keep-data reinstall', async t => {
@@ -145,4 +163,57 @@ test('failed activation retains an instance whose owned-process cleanup needs re
   assert.equal(closes, 2);
   assert.equal(plugins.recovering.size, 0);
   assert.equal(plugins.record('test-agent').state, 'uninstalled');
+});
+
+test('entry contributions and required host features are negotiated at the manifest boundary', () => {
+  const manifest = { type: 'application', showIcon: true, background: 'none',
+    views: [{ id: 'conversation', title: 'AI', entry: 'index.html', contributes: { entries: ['global-conversation'] } }],
+    requiredHostFeatures: ['desk.capabilities.v1', 'desk.entries.v1'] };
+  assert.equal(pluginProperties(manifest).views[0].contributes.entries[0], 'global-conversation');
+  assert.equal(pluginProperties({ ...manifest, requiredHostFeatures: ['desk.development.v1'],
+    views: [{ ...manifest.views[0], contributes: { entries: ['plugin-development'] } }] }).views[0].contributes.entries[0], 'plugin-development');
+  assert.throws(() => pluginProperties({ ...manifest, requiredHostFeatures: ['desk.unknown.v9'] }), /宿主/);
+  assert.equal(pluginProperties({ ...manifest,
+    views: [{ ...manifest.views[0], contributes: { entries: ['text-document'] } }] }).views[0].contributes.entries[0], 'text-document');
+  for (const entry of ['', '../document', 42, 'A', 'a'.repeat(65)]) {
+    assert.throws(() => pluginProperties({ ...manifest, views: [{ ...manifest.views[0], contributes: { entries: [entry] } }] }), /入口/);
+  }
+});
+
+test('independent settings pages support every plugin type and validate metadata', async t => {
+  for (const type of ['application', 'service', 'resource']) {
+    const manifest = { type, showIcon: false, background: 'none', settings: { entry: 'settings.html' },
+      author: { name: 'Example author' }, requiredHostFeatures: ['desk.settings.v1'] };
+    assert.equal(pluginProperties(manifest).settings.entry, 'settings.html');
+    for (const settings of [null, [], {}, { entry: '' }, { entry: 42 }]) {
+      assert.throws(() => pluginProperties({ ...manifest, settings }), /settings/);
+    }
+    assert.throws(() => pluginProperties({ ...manifest, author: {} }), /author/);
+  }
+  const { directory, storage } = await source(t, { settings: { entry: 'settings.html' } });
+  await writeFile(join(directory, 'settings.html'), '<h1>Settings</h1>');
+  assert.equal((await inspectPackage(directory)).settings.entry, 'settings.html');
+  const manifest = await storage.readJson('source-test-agent/plugin.json');
+  for (const entry of ['../settings.html', '/settings.html', 'missing.html']) {
+    await writeFile(join(directory, 'plugin.json'), JSON.stringify({ ...manifest, settings: { entry } }));
+    await assert.rejects(inspectPackage(directory), /入口越界或不存在/);
+  }
+});
+
+// Single-instance is a host presentation rule, independent of the plugin's backend lifetime.
+test('single instance defaults off and requires a boolean manifest value', () => {
+  const manifest = { type: 'application', background: 'none' };
+  assert.equal(pluginProperties(manifest).singleInstance, false);
+  assert.equal(pluginProperties({ ...manifest, singleInstance: true }).singleInstance, true);
+  assert.throws(() => pluginProperties({ ...manifest, singleInstance: 'yes' }), /singleInstance/);
+});
+
+// Every shipped domain explicitly chooses its presentation policy; the host has no ID allowlist.
+test('shipped plugins explicitly declare their allowed window multiplicity', async () => {
+  for (const [directory, singleInstance] of [['ai-agent', false], ['text-editor', false], ['work-flow', false],
+    ['mcp', true], ['codex-capture', true], ['resource-monitor', true]]) {
+    const manifest = JSON.parse(await readFile(new URL(`../../plugin-dev/${directory}/plugin.json`, import.meta.url)));
+    assert.equal(manifest.singleInstance, singleInstance, directory);
+    assert.equal(pluginProperties(manifest).singleInstance, singleInstance, directory);
+  }
 });

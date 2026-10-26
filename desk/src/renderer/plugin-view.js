@@ -1,7 +1,7 @@
 import { api, el, toast } from './ui.js';
 
 // The source frame determines ownership; a plugin cannot supply another plugin's ID.
-export function mountPluginView(root, plugin, view, { focused } = {}) {
+export function mountPluginView(root, plugin, view, { focused, summary, initialState, presentation, openView } = {}) {
   const origin = `desk-plugin://${plugin.id}`;
   const frame = el('iframe', { src: `${origin}/${view.entry}`, title: view.title,
     sandbox: 'allow-scripts allow-same-origin', class: 'plugin-view' });
@@ -12,6 +12,14 @@ export function mountPluginView(root, plugin, view, { focused } = {}) {
     }
     if (event.data?.type === 'desk:focus') {
       focused?.();
+      return;
+    }
+    if (event.data?.type === 'desk:overlay-summary' && typeof event.data.text === 'string' && event.data.text.length <= 240) {
+      summary?.(event.data.text);
+      return;
+    }
+    if (event.data?.type === 'desk:overlay-state' && typeof event.data.defaultCollapsed === 'boolean') {
+      initialState?.(event.data.defaultCollapsed);
       return;
     }
     if (event.data?.type !== 'desk:invoke') {
@@ -25,8 +33,16 @@ export function mountPluginView(root, plugin, view, { focused } = {}) {
       let value;
       if (method === 'plugin.invoke') {
         value = await api.plugins.invoke(plugin.id, ...args);
+      } else if (method === 'host.getLaunchContext') {
+        value = view.launchContext || null;
+      } else if (method === 'host.openView' && openView) {
+        value = await openView(...args);
       } else if (method === 'host.chooseDirectory') {
         value = await api.host.chooseDirectory();
+      } else if (method === 'host.chooseFile') {
+        value = await api.host.chooseFile(args[0]);
+      } else if (method === 'host.openExternal') {
+        value = await api.host.openExternal(args[0]);
       } else if (method === 'storage.getPreferences') {
         // Plugins receive the resolved color so the existing light/dark contract remains unchanged.
         value = { ...await api.storage.getPreferences(), theme: document.documentElement.dataset.theme };
@@ -46,13 +62,21 @@ export function mountPluginView(root, plugin, view, { focused } = {}) {
   });
   const theme = () => send({ type: 'desk:theme', theme: document.documentElement.dataset.theme });
   window.addEventListener('desk-theme', theme);
+  frame.addEventListener('load', () => {
+    theme();
+    if (presentation) {
+      send({ type: 'desk:presentation', ...presentation() });
+    }
+  });
   frame.addEventListener('error', () => toast(`${view.title} 视图加载失败，可重新打开`));
   root.classList.add('plugin-container');
   root.replaceChildren(frame);
-  return () => {
+  const dispose = () => {
     off();
     window.removeEventListener('message', receive);
     window.removeEventListener('desk-theme', theme);
     frame.remove();
   };
+  dispose.send = send;
+  return dispose;
 }

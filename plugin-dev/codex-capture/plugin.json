@@ -1,0 +1,25 @@
+{
+  "id": "codex-capture",
+  "name": "Agent 抓包",
+  "version": "0.2.1",
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "type": "application",
+  "showIcon": true,
+  "loadOnStartup": true,
+  "background": "service",
+  "main": "src/main/common/index.js",
+  "renderer": "src/renderer/app.js",
+  "icon": "ico/icon.svg",
+  "description": "按 Agent 窗口和具体对话查看请求响应，接入和日志由 Agent 插件管理。",
+  "closeDescription": "停止目标对话的记录，保留日志；不关闭 Agent 引擎。",
+  "views": [
+    {
+      "id": "capture",
+      "title": "Agent 抓包",
+      "entry": "dist/renderer/index.html"
+    }
+  ],
+  "author": "Work Desk",
+  "singleInstance": true
+}

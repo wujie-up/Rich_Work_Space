@@ -1,0 +1,46 @@
+{
+  "id": "ai-agent-sessions",
+  "name": "AI Agent 会话",
+  "version": "0.6.7",
+  "type": "application",
+  "showIcon": true,
+  "loadOnStartup": true,
+  "background": "service",
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "main": "src/main/common/index.js",
+  "capabilities": [
+    "agent-sessions"
+  ],
+  "description": "独立管理 Codex、Claude Code 引擎与授权，统一对话和插件能力调用，保留原有终端历史。",
+  "renderer": "src/renderer/app.js",
+  "views": [
+    {
+      "id": "sessions",
+      "title": "AI Agent 会话",
+      "entry": "dist/renderer/index.html"
+    },
+    {
+      "id": "conversation",
+      "title": "AI 对话",
+      "entry": "dist/renderer/conversation.html",
+      "contributes": {
+        "entries": [
+          "global-conversation"
+        ]
+      }
+    }
+  ],
+  "closeDescription": "关闭并归档会话，保留配置和历史。",
+  "icon": "ico/icon.svg",
+  "requiredHostFeatures": [
+    "desk.capabilities.v1",
+    "desk.entries.v1",
+    "desk.settings.v1"
+  ],
+  "settings": {
+    "entry": "dist/renderer/settings.html"
+  },
+  "author": "Work Desk",
+  "singleInstance": false
+}

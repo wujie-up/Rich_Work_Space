@@ -1,0 +1,5 @@
+.session-status{display:inline-flex;flex-shrink:0;width:27px;height:30px;color:var(--muted)}.session-status svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.session-status[data-kind=working]{color:var(--accent)}.session-status[data-kind=waiting]{color:#93cbaa}.session-status[data-kind=blocked]{color:#efbb7d}
+.typing{animation:typing .55s steps(2,end) infinite}.steam{animation:steam 2s ease-in-out infinite}.ringing{transform-origin:16px 10px;animation:ring .3s ease-in-out infinite alternate}.ring-lines{animation:typing .4s steps(2,end) infinite}
+@keyframes typing{50%{transform:translateY(2px);opacity:.4}}@keyframes steam{50%{transform:translateY(-2px);opacity:.35}}@keyframes ring{to{transform:rotate(10deg)}}
+@media(prefers-reduced-motion:reduce){.session-status svg *{animation:none!important}}

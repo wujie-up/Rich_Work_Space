@@ -6,15 +6,15 @@ import { listPackage } from '@electron/asar';
 import { launch, configure, create, output, owner, alive, openConfiguration } from './helpers.js';
 
 test('package: independent app resources, Finder PATH, native PTY, archive and cleanup', { timeout: 120000 }, async (t) => {
-  const bundle = resolve('desk/dist/releases/mac-arm64/Work Desk.app');
-  const executablePath = `${bundle}/Contents/MacOS/Work Desk`;
+  const bundle = resolve('desk/dist/releases.noindex/mac-arm64/DeckPg.app');
+  const executablePath = `${bundle}/Contents/MacOS/DeckPg`;
   await access(executablePath);
   const {version} = JSON.parse(await readFile(resolve('package.json'), 'utf8'));
   for (const ext of ['dmg', 'zip']) {
-    assert.ok((await stat(resolve(`desk/dist/releases/Work Desk-${version}-arm64.${ext}`))).size > 1000000);
+    assert.ok((await stat(resolve(`desk/dist/releases.noindex/DeckPg-${version}-arm64.${ext}`))).size > 1000000);
   }
   const entries = listPackage(`${bundle}/Contents/Resources/app.asar`);
-  assert.ok(entries.includes('/plugins/plugins/ai-agent/plugin.json'));
+  assert.ok(entries.includes('/desk/dist/plugins/ai-agent/plugin.json'));
   assert.ok(entries.includes('/desk/dist/renderer/app.js'));
   assert.ok(entries.includes('/desk/dist/renderer/app.css'));
   assert.ok(!entries.some((path) => path.includes('codex-terminals')));
@@ -42,22 +42,25 @@ test('package: independent app resources, Finder PATH, native PTY, archive and c
 });
 
 test('package: force close reaps owned PTY processes, keeps configuration and follows native system appearance', { timeout: 60000 }, async (t) => {
-  const executablePath = resolve('desk/dist/releases/mac-arm64/Work Desk.app/Contents/MacOS/Work Desk');
+  const executablePath = resolve('desk/dist/releases.noindex/mac-arm64/DeckPg.app/Contents/MacOS/DeckPg');
   const { app, page, data } = await launch(t, { executablePath });
   // Playwright defaults to emulated light appearance; let Chromium observe nativeTheme in this regression.
   await page.emulateMedia({ colorScheme: null });
   assert.equal((await page.evaluate(() => workDesk.storage.getPreferences())).theme, 'system');
   await app.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'dark'; });
   await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+  const frame = page.frames().find(frame => frame.url().startsWith(`desk-plugin://${owner}/`));
+  await frame.waitForFunction(() => getComputedStyle(document.documentElement).backgroundColor === 'rgb(22, 22, 22)');
   await app.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'light'; });
   await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
-  await page.frameLocator('iframe').locator('html[data-theme="light"]').waitFor();
+  await frame.waitForFunction(() => getComputedStyle(document.documentElement).backgroundColor === 'rgb(255, 255, 255)');
   await configure(page, { child: true });
   const configPath = resolve(data, 'plugin-data', owner, 'config.json');
   const config = await readFile(configPath, 'utf8');
   const session = await create(page, '强制关闭的真实 PTY');
   const snapshot = await output(page, session.id, /CHILD=\d+\r?\n/);
   const child = Number(snapshot.data.match(/CHILD=(\d+)/)[1]);
+  await page.getByRole('tab').hover();
   await page.getByRole('button', { name: '关闭窗口', exact: true }).click();
   await page.getByRole('button', { name: '强制关闭', exact: true }).click();
   await page.waitForFunction(() => document.querySelectorAll('.application-window').length === 0);

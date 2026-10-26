@@ -1,10 +1,11 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { rm } from 'node:fs/promises';
+import { rm, readdir, readFile } from 'node:fs/promises';
 import { fail, pluginId } from '../../shared/contracts.js';
 import { importPackage, inspectPackage, withPackageSource } from './plugin-package.js';
 import { PluginRuntime } from './plugin-runtime.js';
-import { pluginProperties } from './plugin-manifest.js';
+import { Capabilities } from './capabilities.js';
+import { pluginProperties, validatePresentation } from './plugin-manifest.js';
 
 export class Plugins {
   constructor({ storage, builtins = [], emit = () => {}, runtimeFactory = (options) => new PluginRuntime(options) }) {
@@ -18,10 +19,14 @@ export class Plugins {
     this.recovering = new Map();
     this.activating = new Map();
     this.taskCalls = new Map();
+    this.capabilities = new Capabilities({ storage, loaded: this.loaded, emit, usable: id => {
+      const record = this.records.get(id);
+      return !this.quitting && record?.state === 'enabled' && !record.operation && !this.operations.has(id);
+    } });
   }
 
   list() {
-    return [...this.records.values()].map((record) => ({ ...record,
+    return [...this.records.values()].map((record) => ({ ...record, running: Boolean(this.loaded.get(record.id) && !this.loaded.get(record.id).closed),
       views: this.loaded.get(record.id)?.views?.length ? this.loaded.get(record.id).views : record.views || [] }));
   }
 
@@ -31,16 +36,24 @@ export class Plugins {
   }
 
   async load() {
+    await this.capabilities.load();
     const records = await this.storage.readJson('plugins.json', null);
     for (const record of records || []) {
       pluginId(record.id);
       this.records.set(record.id, pluginProperties(record));
     }
+    await this.discoverDirectories();
     if (records === null && this.builtins.length) {
       for (const builtin of this.builtins) {
-        await this.install(builtin).catch((error) => console.error('[plugin:builtin]', { directory: builtin, message: error.message }));
+        try {
+          const manifest = await inspectPackage(builtin);
+          if (!this.records.has(manifest.id)) {
+            await this.install(builtin);
+          }
+        } catch (error) {
+          console.error('[plugin:builtin]', { directory: builtin, message: error.message });
+        }
       }
-      return;
     }
     for (const record of this.records.values()) {
       if (record.operation) {
@@ -51,7 +64,10 @@ export class Plugins {
           record.state = 'disabled';
         }
       }
-      if (record.state === 'enabled' && record.loadOnStartup && record.background === 'service') {
+      if (record.state !== 'uninstalled' && !await this.validateInstalled(record)) {
+        continue;
+      }
+      if (!this.loaded.has(record.id) && record.state === 'enabled' && record.loadOnStartup && record.background === 'service') {
         try {
           await this.activate(record.id);
         } catch (error) {
@@ -61,6 +77,55 @@ export class Plugins {
       }
     }
     await this.persist();
+  }
+
+  // Scan only installation directories; one malformed plugin must not prevent the desk from starting.
+  async discoverDirectories() {
+    const directory = await this.storage.path('plugins');
+    const entries = await readdir(directory, { withFileTypes: true }).catch(error => {
+      if (error.code !== 'ENOENT') {
+        throw error;
+      }
+      return [];
+    });
+    for (const entry of entries.filter(entry => !entry.name.startsWith('.'))) {
+      try {
+        pluginId(entry.name);
+        const source = await this.storage.path(`plugins/${entry.name}`);
+        const manifest = pluginProperties(JSON.parse(await readFile(join(source, 'plugin.json'), 'utf8')));
+        if (manifest.id !== entry.name) {
+          throw fail('INVALID_PACKAGE', '插件目录名称必须与清单 id 一致');
+        }
+        const previous = this.records.get(manifest.id);
+        if (previous?.cleanupPending || (previous && previous.dataVersion !== manifest.dataVersion)) {
+          throw fail('INVALID_PACKAGE', '插件待清理或数据版本不兼容');
+        }
+        this.records.set(manifest.id, { operation: null, lastError: null,
+          ...previous, ...manifest, state: previous?.state === 'disabled' ? 'disabled' : 'enabled' });
+      } catch (error) {
+        const record = this.records.get(entry.name);
+        if (record) {
+          record.state = 'disabled';
+          record.lastError = { code: 'INVALID_PACKAGE', message: error.message, stage: 'integrity' };
+        }
+        console.error('[plugin:directory]', { pluginId: entry.name, message: error.message });
+      }
+    }
+  }
+
+  async validateInstalled(record) {
+    try {
+      const manifest = await inspectPackage(await this.storage.packageDirectory(record.id));
+      if (manifest.id !== record.id) {
+        throw fail('INVALID_PACKAGE', '插件目录与清单 id 不一致');
+      }
+      return true;
+    } catch (error) {
+      record.state = 'disabled';
+      record.lastError = { code: 'INVALID_PACKAGE', message: error.message, stage: 'integrity' };
+      console.error('[plugin:integrity]', { pluginId: record.id, message: error.message });
+      return false;
+    }
   }
 
   record(id) {
@@ -99,6 +164,15 @@ export class Plugins {
     }
     return record.background === 'task' ? this.invokeTask(id, method, { args, context })
       : this.ensureRuntime(id).then(() => this.invokeRegistered(id, method, { args, context }));
+  }
+
+  async start(id) {
+    this.assertEnabled(id);
+    if (this.record(id).background !== 'service') {
+      throw fail('PLUGIN_UNAVAILABLE', '此插件没有持续后台');
+    }
+    await this.ensureRuntime(id);
+    await this.persist();
   }
 
   invokeRegistered(id, method, { args, context }) {
@@ -159,6 +233,7 @@ export class Plugins {
         await runtime.call('$stop', ['task-complete']);
         await runtime.call('$deactivate');
       } finally {
+        this.capabilities.revoke(runtime);
         await runtime.close();
         this.loaded.delete(id);
       }
@@ -212,6 +287,18 @@ export class Plugins {
 
   // Only published methods on the current live runtime participate; contracts stay opaque to desk.
   async serviceRequest(message, parent, source) {
+    if (message.action === 'host.runtimeDirectory') {
+      if (source.closed || this.loaded.get(source.id) !== source) {
+        throw fail('PLUGIN_UNAVAILABLE', '插件运行实例已失效');
+      }
+      this.assertEnabled(source.id);
+      return { version: 1, plugins: [...this.loaded.values()].filter(runtime => !runtime.closed && runtime.child?.pid)
+        .map(runtime => ({ pluginId: runtime.id, name: this.record(runtime.id).name, state: this.record(runtime.id).state,
+          instanceId: runtime.instanceId, pid: runtime.child.pid, ownedPids: [...runtime.ownedPids] })) };
+    }
+    if (message.action.startsWith('capabilities.')) {
+      return this.capabilityRequest(message, parent, source);
+    }
     if (!parent || this.loaded.get(source.id) !== source) {
       throw fail('SERVICE_UNAVAILABLE', '插件服务只能在有效调用中使用');
     }
@@ -239,9 +326,40 @@ export class Plugins {
     return this.invoke(provider.pluginId, provider.method, [input], { chain: [...parent.chain, provider.pluginId], deadline });
   }
 
+  // Origins and parent contexts come from the live process, never from plugin-supplied metadata.
+  capabilityRequest(message, parent, source) {
+    const current = this.loaded.get(source.id) === source;
+    const starting = this.recovering.get(source.id) === source;
+    const action = message.action.slice('capabilities.'.length);
+    // Live providers must revoke registrations during quit; all new work remains blocked.
+    if (source.closed || (!current && !starting) || (this.quitting && action !== 'unregister')) {
+      throw fail('PROVIDER_UNAVAILABLE', '插件实例已失效');
+    }
+    if (['register', 'upsert', 'unregister'].includes(action)) {
+      if (this.record(source.id).background !== 'service') { throw fail('INVALID_CAPABILITY', '持久能力需要 service 后台'); }
+      if (action === 'unregister') { return this.capabilities.unregister(source, message.input.id, message.input.version); }
+      return this.capabilities.register(source, message.input, action === 'upsert');
+    }
+    // Only the host-created stop context may finish cleanup after the owner is locked.
+    if (parent?.lifecycle !== 'stop') {
+      this.assertEnabled(source.id);
+    }
+    if (!current || (message.parentId !== undefined && !parent) || (parent && parent.deadline <= Date.now())) {
+      throw fail('CALL_TIMEOUT', '调用上下文已结束');
+    }
+    if (action === 'discover') { return this.capabilities.discover(message.input); }
+    if (action === 'get') { return this.capabilities.get(source, message.input); }
+    if (action === 'cancel') { return this.capabilities.cancel(source, message.input); }
+    if (action === 'invoke') {
+      const { handle, input, options } = message.input;
+      return this.capabilities.invoke(source, handle, input, options, parent);
+    }
+    throw fail('METHOD_NOT_FOUND', '能力协议方法不存在');
+  }
+
   // Each activation owns a separate process and its registrations.
   async activate(id) {
-    const directory = await this.storage.path(`packages/${pluginId(id)}`);
+    const directory = await this.storage.packageDirectory(pluginId(id));
     await inspectPackage(directory);
     if (this.quitting) {
       throw fail('PLUGIN_UNAVAILABLE', '桌面正在退出');
@@ -253,13 +371,17 @@ export class Plugins {
     // Track the live process before activation resolves so emergency exit can reap a frozen startup.
     this.recovering.set(id, runtime);
     try {
-      Object.assign(runtime, await runtime.ready);
+      const ready = await runtime.ready;
+      const capabilities = (runtime.services || []).filter(entry => entry.contract === 'desk.capabilities.v1');
+      Object.assign(runtime, ready, { services: [...(ready.services || []), ...capabilities], instanceId: runtime.instanceId || randomUUID() });
       const record = this.record(id);
+      runtime.views.forEach(validatePresentation);
       if ((record.type !== 'application' && runtime.views.length)
         || (record.background === 'task' && runtime.services?.length)) {
         throw fail('INVALID_PACKAGE', '服务插件不能注册窗口，task 后台不能发布持久服务');
       }
       this.loaded.set(id, runtime);
+      this.capabilities.changed();
       this.recovering.delete(id);
       console.info('[plugin:activated]', { pluginId: id, pid: runtime.child?.pid });
     } catch (error) {
@@ -280,6 +402,7 @@ export class Plugins {
     if (this.loaded.get(id) !== runtime) {
       return;
     }
+    this.capabilities.revoke(runtime);
     this.loaded.delete(id);
     this.recovering.set(id, runtime);
     const record = this.record(id);
@@ -318,7 +441,7 @@ export class Plugins {
       throw fail('PLUGIN_CONFLICT', '插件已安装、仍待清理或数据版本不兼容');
     }
     return this.run(manifest.id, 'installing', async () => {
-      await rm(await this.storage.path(`packages/${manifest.id}`), { recursive: true, force: true });
+      await this.removePackageFiles(manifest.id);
       await importPackage(this.storage, source);
       const record = { ...manifest, state: 'disabled', operation: 'installing', cleanupPending: false, lastError: null };
       this.records.set(manifest.id, record);
@@ -330,12 +453,22 @@ export class Plugins {
     });
   }
 
+  // Remove both roots so uninstall cannot reveal a stale legacy copy on the next launch.
+  async removePackageFiles(id) {
+    for (const root of ['plugins', 'packages']) {
+      await rm(await this.storage.path(`${root}/${pluginId(id)}`), { recursive: true, force: true });
+    }
+  }
+
   enable(id) {
     const record = this.record(id);
     if (record.state === 'uninstalled') {
       return Promise.reject(fail('PLUGIN_NOT_FOUND', '请重新导入插件包'));
     }
     return this.run(id, 'enabling', async () => {
+      if (!await this.validateInstalled(record)) {
+        throw fail('INVALID_PACKAGE', record.lastError.message);
+      }
       if (this.recovering.has(id) || this.loaded.get(id)?.closed) {
         await this.deactivate(id);
       }
@@ -350,12 +483,12 @@ export class Plugins {
     const runtime = this.loaded.get(id);
     const runningTasks = runtime && !runtime.closed ? await runtime.call('$snapshot') : [];
     const digest = createHash('sha256').update(JSON.stringify({ id, action, runningTasks })).digest('hex');
-    return { pluginId: id, action, runningTasks, digest };
+    return { pluginId: id, action, runningTasks, digest, closeDescription: this.record(id).closeDescription || '' };
   }
 
   async preview(id, action) {
     this.record(id);
-    if (!['disable', 'remove'].includes(action)) {
+    if (!['close', 'disable', 'remove'].includes(action)) {
       throw fail('INVALID_ARGUMENT', '操作类型无效');
     }
     this.checkIdle(id);
@@ -386,30 +519,49 @@ export class Plugins {
     return this.transition(id, 'disable', token, async () => this.deactivate(id));
   }
 
+  // Closing stops this runtime without changing the user's enablement preference.
+  async close(id, token) {
+    const state = this.record(id).state;
+    const result = await this.transition(id, 'close', token, () => this.deactivate(id, state));
+    this.emit('plugins.closed', { pluginId: id });
+    return result;
+  }
+
+  async forceClose(id) {
+    const result = await this.forceStop(id, this.record(id).state);
+    this.emit('plugins.closed', { pluginId: id });
+    return result;
+  }
+
   // Emergency shutdown skips plugin callbacks; only this live runtime's registered processes are terminated.
   forceDisable(id) {
+    return this.forceStop(id, 'disabled');
+  }
+
+  forceStop(id, state) {
     if (this.record(id).state === 'uninstalled') {
       return Promise.reject(fail('PLUGIN_NOT_FOUND', '插件已卸载'));
     }
     const pending = this.operations.get(id);
     if (pending) {
-      if (pending.intent === 'force-closing') {
+      if (pending.intent === `force-closing:${state}`) {
         return pending;
       }
       if (['installing', 'deleting'].includes(this.record(id).operation)) {
         return Promise.reject(fail('PLUGIN_BUSY', '请等待插件安装或卸载完成'));
       }
-      this.record(id).state = 'disabled';
+      this.record(id).state = state;
       return Promise.allSettled([pending, this.loaded.get(id)?.close(), this.recovering.get(id)?.close()])
-        .then(() => this.forceDisable(id));
+        .then(() => this.forceStop(id, state));
     }
     return this.run(id, 'force-closing', async () => {
       const record = this.record(id);
-      record.state = 'disabled';
+      record.state = state;
       const close = async () => {
         for (const instances of [this.loaded, this.recovering]) {
           const runtime = instances.get(id);
           if (runtime) {
+            this.capabilities.revoke(runtime);
             await runtime.close();
             instances.delete(id);
           }
@@ -419,8 +571,10 @@ export class Plugins {
       // A lazy activation may already be in flight; drain it before permitting another instance.
       await Promise.allSettled([this.activating.get(id)]);
       await close();
-      console.info('[plugin:force-closed]', { pluginId: id });
-    });
+      // Interrupted activation may mark itself disabled; the explicit operation owns the final state.
+      record.state = state;
+      console.info('[plugin:force-closed]', { pluginId: id, state });
+    }, `force-closing:${state}`);
   }
 
   remove(id, policy, token) {
@@ -433,7 +587,7 @@ export class Plugins {
       record.operation = 'deleting';
       record.removalPolicy = policy;
       await this.persist();
-      await rm(await this.storage.path(`packages/${id}`), { recursive: true, force: true });
+      await this.removePackageFiles(id);
       record.state = 'uninstalled';
       record.cleanupPending = policy === 'clear';
       await this.persist();
@@ -450,18 +604,18 @@ export class Plugins {
       return current.intent === intent ? current : Promise.reject(fail('PLUGIN_BUSY', '插件正在执行其他操作'));
     }
     this.checkIdle(id);
-    return this.run(id, action === 'remove' ? 'deleting' : 'disabling', async () => {
+    return this.run(id, { remove: 'deleting', disable: 'disabling', close: 'closing' }[action], async () => {
       await this.confirm(id, action, token);
       await this.persist();
       const runtime = this.loaded.get(id);
       if (runtime && !runtime.closed) {
-        await runtime.call('$stop', [action]);
+        await runtime.call('$stop', [action], { chain: [id], deadline: Date.now() + 30000, lifecycle: 'stop' });
       }
       await work();
     }, intent);
   }
 
-  async deactivate(id) {
+  async deactivate(id, state = 'disabled') {
     // Failed crash cleanup must complete before this instance can be replaced or removed.
     const recovering = this.recovering.get(id);
     if (recovering) {
@@ -470,6 +624,7 @@ export class Plugins {
     }
     const registration = this.loaded.get(id);
     if (registration) {
+      this.capabilities.revoke(registration);
       if (!registration.closed) {
         await registration.call('$deactivate');
       }
@@ -477,10 +632,10 @@ export class Plugins {
         await registration.close();
         this.loaded.delete(id);
       } finally {
-        this.record(id).state = 'disabled';
+        this.record(id).state = state;
       }
     }
-    this.record(id).state = 'disabled';
+    this.record(id).state = state;
   }
 
   async cleanup(id) {
@@ -532,6 +687,7 @@ export class Plugins {
     }).finally(() => {
       if (this.operations.get(id) === promise) {
         this.operations.delete(id);
+        this.capabilities.changed();
       }
     });
     promise.intent = intent;
@@ -555,6 +711,7 @@ export class Plugins {
   async forceQuit() {
     this.quitting = true;
     await Promise.allSettled([...new Set([...this.loaded.values(), ...this.recovering.values()])].map(async (runtime) => {
+      this.capabilities.revoke(runtime);
       console.info('[plugin:force-quit]', { pluginId: runtime.id, pid: runtime.child?.pid });
       await runtime.close();
     }));

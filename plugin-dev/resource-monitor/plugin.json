@@ -1,0 +1,22 @@
+{
+  "id": "resource-monitor",
+  "name": "资源监控",
+  "version": "0.1.2",
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "type": "application",
+  "showIcon": true,
+  "singleInstance": true,
+  "loadOnStartup": true,
+  "background": "service",
+  "requiredHostFeatures": ["desk.overlays.v1", "desk.runtime-directory.v1", "desk.settings.v1"],
+  "main": "src/main/common/index.js",
+  "renderer": "src/renderer/app.js",
+  "icon": "ico/icon.svg",
+  "author": "Work Desk",
+  "description": "在桌面悬浮面板中查看各插件后台及子进程的 CPU、内存和网络趋势。",
+  "closeDescription": "停止资源采样，保留设置和悬浮位置。",
+  "settings": { "entry": "src/resource/settings.html" },
+  "views": [{ "id": "main", "title": "资源监控", "entry": "dist/renderer/index.html",
+    "presentation": { "type": "overlay", "width": 380, "height": 380, "collapsedWidth": 340, "collapsedHeight": 36 } }]
+}

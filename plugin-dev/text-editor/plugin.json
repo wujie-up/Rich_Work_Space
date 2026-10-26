@@ -1,0 +1,32 @@
+{
+  "id": "text-editor",
+  "name": "文本编辑器",
+  "version": "0.1.6",
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "type": "application",
+  "showIcon": true,
+  "loadOnStartup": false,
+  "background": "service",
+  "main": "src/main/common/index.js",
+  "renderer": "src/renderer/app.js",
+  "description": "离线文本编辑、JSON/XML/YAML 格式化及 Markdown、Mermaid、PlantUML 预览，无需 Java 或 Python。",
+  "views": [
+    {
+      "id": "editor",
+      "title": "文本编辑器",
+      "entry": "dist/renderer/index.html",
+      "contributes": {
+        "entries": [
+          "text-document"
+        ]
+      }
+    }
+  ],
+  "closeDescription": "关闭编辑器，保留已保存文件和草稿。",
+  "icon": "ico/icon.svg",
+  "requiredHostFeatures": [
+    "desk.entries.v1"
+  ],
+  "singleInstance": false
+}

@@ -1,6 +1,6 @@
 {
-  "name": "work-desk",
-  "version": "0.1.5",
+  "name": "rich-work-space",
+  "version": "0.1.23",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -12,12 +12,14 @@
   "scripts": {
     "build": "node desk/build/build.mjs",
     "start": "npm run build && electron .",
-    "test": "node --test desk/test/*.test.js plugins/plugins/*/test/*.test.js",
-    "test:electron": "node --test --test-concurrency=1 desk/test/electron/*.test.js plugins/plugins/*/test/electron/*.test.js",
+    "test": "node --test desk/test/*.test.js plugin-dev/*/test/*.test.js",
+    "test:electron": "node --test --test-concurrency=1 desk/test/electron/*.test.js plugin-dev/*/test/electron/*.test.js",
     "postinstall": "electron-builder install-app-deps",
     "dist:mac": "npm run build && electron-builder --config desk/build/electron-builder.yml --mac --arm64",
     "build:desk": "node desk/build/build.mjs --desk-only",
     "test:desktop-ui": "npm run build:desk && node --test desk/test/electron/desktop-ui.test.js",
+    "install:mac": "node desk/build/install-mac.mjs",
+    "check:mac-installation": "node desk/build/check-mac-installation.mjs",
     "pack:plugin": "node desk/build/pack-plugin.mjs"
   },
   "dependencies": {

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>文本编辑器</title><link rel="stylesheet" href="app.css"></head>
+<body><main>
+<header><span class="local">离线 · 本地文件</span>
+<div class="actions">
+  <button id="folder" class="icon-button" aria-label="打开文件夹" title="打开文件夹">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5h6l2 2h10v3M3 7v13h16l3-10H6L3 20"/></svg>
+  </button>
+  <button id="new" class="icon-button" aria-label="新建" title="新建">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H5v20h14V7zM14 2v6h5M8 14h8M12 10v8"/></svg>
+  </button>
+  <button id="save" class="icon-button" aria-label="保存" title="保存 (⌘S / Ctrl+S)">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h14l3 3v15H3V3zM7 3v6h10V3M7 21v-8h10v8"/></svg>
+  </button>
+  <button id="save-as" class="icon-button" aria-label="另存为" title="另存为">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3H3v18h18v-9M7 3v6h5M7 21v-8h5M15 5h7M19 2v7"/></svg>
+  </button>
+  <button id="drafts" class="icon-button" aria-label="草稿" title="草稿">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H4v18h16V8M8 3v5h8M10 15l2-5 7-7 3 3-7 7z"/></svg>
+  </button>
+</div></header>
+<section id="draft-list" hidden aria-label="恢复草稿"></section>
+<div class="document-bar"><input id="filename" aria-label="文件名称" value="未命名.md" spellcheck="false"><span id="dirty"></span>
+<select id="type" aria-label="文件格式"><option value="md">Markdown</option><option value="txt">TXT</option><option value="json">JSON</option><option value="jsonc">JSONC</option><option value="xml">XML</option><option value="yaml">YAML</option><option value="puml">PlantUML</option></select>
+<button id="format">格式化</button><div class="modes" role="group" aria-label="显示模式">
+  <button data-mode="edit" class="icon-button" aria-label="编辑" title="编辑">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16-1 5 5-1L21 7l-4-4zM14 6l4 4"/></svg>
+  </button>
+  <button data-mode="read" class="icon-button" aria-label="阅读" title="阅读">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+  </button>
+  <button data-mode="split" class="icon-button selected" aria-label="分栏" title="分栏">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M12 4v16M6 8h3M6 12h3M15 8h3M15 12h3"/></svg>
+  </button>
+</div>
+<label class="zoom">字号 <input id="font-size" type="number" min="10" max="28" value="14" aria-label="字号"></label></div>
+<div class="body"><aside id="files" hidden><div id="root"></div><button id="parent">上一级</button><nav id="entries" aria-label="文件列表"></nav></aside>
+<div id="panes" data-mode="split"><textarea id="editor" spellcheck="false" aria-label="文本内容" placeholder="开始编写，或打开本地文件夹…"></textarea><article id="preview" aria-label="Markdown 预览"></article></div></div>
+<footer><span id="status" role="status">就绪 · 支持 UTF-8 文本，最大 256 KiB</span><span id="position">1 行 · 0 字符</span></footer>
+</main><script type="module" src="app.js"></script></body></html>

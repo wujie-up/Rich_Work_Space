@@ -35,7 +35,7 @@ test('isolation: backend SIGKILL and renderer SIGKILL leave desktop and another 
   assert.equal(await page.locator('html').getAttribute('data-theme'), beforeTheme === 'dark' ? 'light' : 'dark');
   await page.evaluate((id) => workDesk.plugins.enable(id), id);
   await openWorkspace(page, id);
-  await page.frameLocator('iframe:visible').getByRole('heading', { name: '隔离验证视图' }).waitFor();
+  await page.frameLocator('iframe[title="隔离验证"]').getByRole('heading', { name: '隔离验证视图' }).waitFor();
   const processes = await app.evaluate(({ BrowserWindow }) => {
     const main = BrowserWindow.getAllWindows()[0].webContents.mainFrame;
     return { host: main.osProcessId, plugin: main.frames.find((frame) => frame.url.startsWith('desk-plugin://isolation-probe/')).osProcessId };
@@ -55,10 +55,10 @@ test('isolation: backend SIGKILL and renderer SIGKILL leave desktop and another 
   }
   assert.match(await host("document.querySelector('#toast').textContent"), /isolation-probe.*界面已退出/);
   await app.evaluate(({ Menu }) => Menu.getApplicationMenu().getMenuItemById('configuration').click());
-  for (let n = 0; n < 100 && !await host("Boolean(document.querySelector('#settings-panel h1'))"); n++) {
+  for (let n = 0; n < 100 && !await host("Boolean(document.querySelector('#settings-panel .plugin-toolbar'))"); n++) {
     await delay(20);
   }
-  assert.equal(await host("document.querySelector('#settings-panel h1').textContent"), '插件中心');
+  assert.equal(await host("Boolean(document.querySelector('#settings-panel .plugin-toolbar'))"), true);
   assert.equal((await host(`workDesk.plugins.invoke('${id}', 'probe.ping', [])`)).value, 'pong');
   await host(`workDesk.plugins.invoke('${owner}', 'sessions.write', ['${healthy.id}', 'after-crash'])`);
   for (let n = 0; n < 100; n++) {
@@ -111,5 +111,5 @@ test('empty desktop remains usable after all plugins are disabled', { timeout: 6
   await toggleTheme(page);
   assert.equal(await page.locator('html').getAttribute('data-theme'), beforeTheme === 'dark' ? 'light' : 'dark');
   await openConfiguration(page);
-  await page.getByRole('heading', { name: '插件中心', exact: true }).waitFor();
+  await page.locator('#settings-panel .plugin-toolbar').waitFor();
 });

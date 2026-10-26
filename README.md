@@ -1,96 +1,109 @@
-# Work Desk
+# DeckPg
 
-本地插件桌面。`desk` 只提供空白桌面、基础黑白主题、插件管理及通用运行机制；AI Agent、终端、Codex 恢复与分叉、Git 等能力由 AI Agent 插件提供。插件后台运行在独立进程，界面运行在独立站点的沙箱 frame。
+基于插件的本地 AI 工作台。`desk` 提供桌面、基础黑白主题、插件管理、隔离运行和通用能力协议；AI、MCP、文本、工作流、抓包和资源监控由插件提供。
+
+## 当前版本
+
+工作台版本 **0.1.23**，已验证 macOS Apple Silicon（arm64）。Linux 实现按平台目录隔离，尚未完成实机验收。
+
+| 插件 | 稳定 ID | 版本 | 多开 |
+| --- | --- | --- | --- |
+| AI Agent | `ai-agent-sessions` | 0.6.7 | 支持 |
+| MCP 服务 | `mcp-services` | 0.4.7 | 单实例 |
+| 文本编辑器 | `text-editor` | 0.1.6 | 支持 |
+| 工作流编排 | `work-flow` | 0.5.2 | 支持 |
+| Agent 抓包 | `codex-capture` | 0.2.1 | 单实例 |
+| 资源监控 | `resource-monitor` | 0.1.2 | 单实例悬浮面板 |
 
 ## 领域目录
 
 ```text
 desk/
-  src/main/common/          桌面、插件运行时、存储及 IPC
+  src/main/common/          宿主、插件运行时、存储及 IPC
   src/main/os/              mac、linux 及共用 POSIX 实现
-  src/renderer/             空白桌面、插件中心、基础主题、插件视图桥接
-  src/resource/             桌面文件资源
-  build/                    构建脚本与打包配置
+  src/renderer/             桌面、标签、设置及插件视图桥接
+  src/resource/             桌面资源
+  build/                    构建、安装及打包脚本
   test/                     宿主与隔离测试
-  dist/                     桌面编译结果及 releases 安装包
-plugins/
-  market/                   插件市场边界，暂未实现
-  plugins/
-    ai-agent/               AI Agent 领域，稳定 ID 为 ai-agent-sessions
-      title.md
-      ico/
-      src/main/common/      会话、适配器、Git、恢复与分叉
-      src/main/os/          平台进程控制
-      src/renderer/         工作区、历史、终端及 CLI 配置
-      src/resource/
-      test/
-      dist/
-    work-flow/              工作流领域占位
-    theme/                  扩展主题领域占位
+  dist/releases.noindex/    macOS 应用和安装包
+plugin-dev/
+  ai-agent/                多引擎 AI 插件
+  mcp/                     MCP 部署、转接及能力发布
+  text-editor/             文本编辑与离线文档绘图
+  work-flow/               工作流与消息处理
+  codex-capture/            Agent 请求抓包
+  resource-monitor/        资源监控
+  dist/                    .plg 和离线引擎包（不提交 Git）
+plugins/market/             插件市场边界，暂未实现在线市场
 ```
 
-依赖方向、故障隔离和 OS 边界的长期约束见 [AGENTS.md](AGENTS.md)。市场、工作流和扩展主题仅记录边界，没有增加未提出的业务实现。
+插件开发目录与运行时安装目录分离。macOS 正式数据目录保持为 `~/Library/Application Support/Work Desk/`，包含：
 
-## 安装与使用
+- `plugins/<pluginId>/`：已安装插件，支持手工解压后校验发现；兼容旧 `packages/<pluginId>/`。
+- `plugin-data/<pluginId>/`：各插件配置、密钥、引擎、日志和历史。
+- `plugin-icons/<pluginId>/`：用户自定义图标，不覆盖插件包内默认图标。
 
-本次构建为 macOS Apple Silicon（arm64）：
+## 安装和升级
 
-- `desk/dist/releases/Work Desk-0.1.0-arm64.dmg`：打开后将应用拖入 Applications。
-- `desk/dist/releases/Work Desk-0.1.0-arm64.zip`：同版本应用压缩包。
-- `desk/dist/releases/mac-arm64/Work Desk.app`：构建后的应用。
+macOS arm64 产物位于 `desk/dist/releases.noindex/DeckPg-0.1.23-arm64.dmg` 及同名 `.zip`。应用使用自定义图标和本地临时签名，尚未进行 Developer ID 签名及 Apple 公证。
 
-此构建没有 Developer ID 签名和 Apple 公证，使用默认 Electron 图标。仅验证 macOS arm64；Linux 代码已归入对应平台目录，尚未实机验证。
+正式安装统一为 `/Applications/DeckPg.app`。从源码更新时先正常退出工作台，再执行：
 
-启动后先显示空白桌面，通过侧栏进入“AI Agent 会话”或“插件中心”。AI 插件支持最多 12 个终端、拖拽排序、拉伸、折叠、归档回放和 Git 分支切换。Codex 需要本机已安装并完成登录；应用使用已有 CLI 环境，不代管凭据。Finder 环境找不到命令时，在插件的“CLI 配置”中填写绝对路径，参数使用 JSON 数组：
-
-```json
-{
-  "codex": { "command": "/opt/homebrew/bin/codex", "args": [] },
-  "custom": { "command": "/absolute/path/to/agent", "args": ["argument with spaces"] }
-}
+```sh
+npm run dist:mac
+npm run install:mac
+open /Applications/DeckPg.app
+npm run check:mac-installation
 ```
 
-Codex 权限使用原生三档：“请求批准”“帮我批准”“完全访问权限”，默认请求批准。帮我批准需要 CLI 支持 `--approve-for-me`；完全访问使用原生关闭沙箱及审批的参数。旧归档恢复与分叉保留原权限，不自动提升权限。自定义 CLI 默认只支持终端和回放。上下文无法可靠识别时，恢复打开原生选择器，分叉明确报错；状态只依据 CLI 明确信号，不根据输出安静推断完成。
+安装脚本只替换应用包，校验签名及系统启动入口；失败时回滚旧应用。配置、插件、密钥及历史保留在外部数据目录，不随应用包替换。正式运行仅允许一个实例。
 
-### 已有安装升级
+插件通过用户菜单的插件入口导入 `.plg`，同 ID 升级保留数据。插件包为标准 gzip tar，包含清单、代码、构建资源及 SHA-256 完整性清单；不包含用户配置或密钥。禁用与关闭分离：关闭释放页面和后台但保留启用状态，禁用阻止继续使用。卸载默认保留数据。
 
-本次插件 API 升为 **v2**，插件 ID 和 dataVersion=1 保持不变。数据目录内的旧 API v1 插件会显示不兼容错误，不在宿主执行，也不会被应用更新静默覆盖。请在插件中心卸载旧“AI Agent 会话”，选择**保留数据**，运行 `npm run build` 和 `npm run pack:plugin -- plugins/plugins/ai-agent`，再导入生成的 `plugins/dist/ai-agent-sessions-0.2.0.plg` 包。该包包含构建后的插件界面；配置、布局和历史继续按原插件 ID 读取。卸载后未重新导入的内置插件不会自动恢复。
+## 桌面和插件协作
 
-关闭会话会终止该 PTY 进程组并归档最后 2 MiB 输出。macOS 关闭窗口保留应用和会话；菜单或 ⌘Q 显式退出时，确认关闭并归档后退出。折叠不停止 CLI。禁用、卸载前列出目标插件的任务，取消后继续运行，任务快照变化需要重新确认。
+点击左侧插件图标复用最近使用的页面。普通插件以顶部标签切换，内容直接铺满下方工作空间；没有外框、外层拖动缩放、最大化或最小化按钮。选中标签与内容背景一致，标签之间保留短竖线，标签与内容之间没有横线。允许多开的插件双击标签新建；是否多开由清单 `singleInstance` 决定。资源监控保留独立悬浮面板形态。
 
-卸载默认保留数据；清理只作用于该插件在 Work Desk 内的配置、布局、日志和历史，不删除工作目录、Agent 全局历史或凭据。故障只回收当前运行实例登记的进程，重启后不会依据旧 PID 接管或结束进程。后台崩溃后可重新启用；界面崩溃后可通过侧栏重新打开。当前插件是可信本地代码，独立进程用于故障隔离，不构成恶意代码的权限沙箱。
+侧栏支持隐藏、调宽、图标按细网格移动和单独缩放。用户可隐藏名称、改名和更换图标。基础主题支持跟随系统，桌面及插件提供中英文界面机制。
 
-正式数据默认位于 `~/Library/Application Support/Work Desk/`。可通过 `--desk-data=/absolute/path` 指定独立目录；测试均使用自己的临时数据目录。
+插件后台运行在独立进程，界面运行在独立站点的沙箱 frame。通过 `desk.capabilities.v1` 注册、发现和调用能力，不直接导入其他插件的实现。全局 AI 对话入口由 `desk.entries.v1` 挂载 AI 插件视图。切换标签不重新加载页面或停止后台任务。
 
-## 开发与验证
+AI 插件独立安装和管理 Codex、Claude Code，支持在线安装、离线引擎包和独立登录；用户明确选择时才复制本机授权或同步 skills、规范。不会隐式复用系统 CLI 或修改本机授权。MCP 插件部署 Python/JavaScript 服务、转接 stdio/Streamable HTTP 服务，并向 AI 发布已启用服务的能力。
 
-需要 Node.js 22+、npm 和 macOS 原生构建工具；复用项目锁定的依赖。
+独立进程是故障边界，不是恶意代码的权限沙箱。当前仅导入可信本地插件；完整性校验不等同于发布者签名。故障清理仅针对本次运行登记的进程，不使用历史 PID。
+
+## 开发和验证
+
+需要 Node.js 22+、npm 和 macOS 原生构建工具。复用锁定依赖：
 
 ```sh
 npm ci
 npm start
 npm test
-# 桌面界面独立验证：只构建desk，模拟宿主契约，不启动业务插件
+# 宿主界面夹具，不启动业务插件、不使用正式数据
 npm run test:desktop-ui
-npm run dist:mac
+# 涉及跨插件契约或生命周期时，运行对应 Electron 集成用例
 npm run test:electron
+# 构建并单独分发插件
+npm run build
+npm run pack:plugin -- plugin-dev/ai-agent
 ```
 
-`postinstall` 为 Electron 重建 node-pty。更新 Electron 后重新执行 `npx electron-builder install-app-deps` 并验证真实 PTY。Electron 安装包用例需要先打包。构建分别生成桌面及各插件界面，桌面 bundle 不包含 AI/xterm 业务代码。
+`postinstall` 为 Electron 重建 node-pty。打包应用测试需先构建安装包。测试按影响领域选择，不将工具网关测试、原生工具发现和真实模型调用混称为通过。需要联网、账户授权或外部服务的人工验收，另按对应插件说明执行。
 
-显式的真实 Codex 验收会使用本机已有 CLI 登录状态，创建自己的测试对话，不恢复用户已有任务：
+0.1.23 桌面改动已通过 41 项宿主界面回归；正式安装后核对 1,019 个配置、插件数据和图标文件，均未改动或丢失，并确认正常启动及唯一应用入口。本次桌面样式回归不代表重新完成全部插件业务验收。
 
-```sh
-node plugins/plugins/ai-agent/test/electron/codex.manual.mjs
-node plugins/plugins/ai-agent/test/electron/codex-permissions.manual.mjs
-```
+## 开发规范
 
-增加 `WORK_DESK_PACKAGED=1` 使用打包应用和收窄的 PATH。权限脚本只在自己的临时会话输入 `/status`，核对三档生效模式；恢复/分叉脚本会发送两条固定测试提示。测试对话会留在 Codex 自己的历史中，工作台清理不会删除它们。
+- [项目约束](AGENTS.md)
+- [插件开发指南](docs/plugin-development.md)
+- [插件 API v2 与能力协议](docs/plugin-api.md)
+- [AI Agent 多引擎](docs/ai-agent-multi-engine.md)
+- [MCP 使用及升级](docs/mcp-plugins.md)
+- [MCP 服务开发](docs/mcp-service-development.md)
 
-[插件 API v2](docs/plugin-api.md)
-
-插件开发与 AI 接入请先阅读 [插件开发指南](docs/plugin-development.md)、[API 协议](docs/plugin-api.md) 和 [MCP 使用与升级](docs/mcp-plugins.md)。
+密钥、授权、运行时数据、安装包和本机验收记录不提交 Git；示例和测试仅使用虚构配置。
 
 ## 许可证
 
-Work Desk 自有源码采用 [MIT License](LICENSE)。第三方依赖仍遵循各自的许可证。
+项目自有源码采用 [MIT License](LICENSE)，第三方依赖遵循各自许可证。

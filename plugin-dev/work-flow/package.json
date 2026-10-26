@@ -1,0 +1,11 @@
+{
+  "type": "module",
+  "version": "0.5.2",
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "1.76.0",
+    "qrcode": "1.5.4",
+    "wechaty": "1.20.2",
+    "wechaty-puppet": "1.20.2",
+    "wechaty-puppet-service": "1.18.2"
+  }
+}

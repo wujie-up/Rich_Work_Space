@@ -19,7 +19,7 @@ test('native .plg selection imports and enables an isolated plugin', { timeout: 
     };
   }, archive);
   await openConfiguration(page);
-  await page.getByRole('button', { name: '＋ 导入本地插件', exact: true }).click();
+  await page.getByRole('button', { name: '导入本地插件', exact: true }).click();
   await page.waitForFunction(async () => (await workDesk.plugins.list()).some((plugin) => plugin.id === 'test-agent' && plugin.state === 'enabled'));
   const options = await app.evaluate(() => globalThis.packageDialogOptions);
   assert.deepEqual(options.properties, ['openFile']);

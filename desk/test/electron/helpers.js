@@ -1,18 +1,36 @@
 import { _electron as electron } from 'playwright';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { cleanApplicationEntries } from '../../src/main/os/mac/installation.js';
+import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createRequire } from 'node:module';
+import { extractFile } from '@electron/asar';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const require = createRequire(import.meta.url);
-export async function launch(t, { executablePath = require('electron'), reducedPath = false, openPlugin = true } = {}) {
+const latestExecutable = resolve('desk/dist/releases.noindex/mac-arm64/DeckPg.app/Contents/MacOS/DeckPg');
+export async function launch(t, { executablePath = process.env.DECKPG_TEST_EXECUTABLE || latestExecutable,
+  reducedPath = false, openPlugin = true, prepareData, disabledPlugins = [] } = {}) {
+  const { version } = JSON.parse(await readFile(resolve('package.json'), 'utf8'));
+  try {
+    await access(executablePath);
+    const bundleVersion = JSON.parse(extractFile(resolve(executablePath, '../../Resources/app.asar'), 'package.json').toString()).version;
+    if (bundleVersion !== version) { throw Error(`包版本 ${bundleVersion}，源码版本 ${version}`); }
+  } catch (error) {
+    throw Error(`桌面测试必须使用最新 DeckPg 安装包，请先运行 npm run dist:mac。${error.message}`);
+  }
   const data = await mkdtemp(join(tmpdir(), 'Work Desk 中文 '));
+  if (prepareData) {
+    await prepareData(data);
+  }
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   if (reducedPath) { env.PATH = '/usr/bin:/bin'; }
-  const packaged = !executablePath.includes('node_modules');
-  const app = await electron.launch({ executablePath, args: [...(packaged ? [] : [resolve('.')]), `--desk-data=${data}`], env, timeout: 60000 });
+  const app = await electron.launch({ executablePath, args: ['--desk-test', `--desk-data=${data}`], env, timeout: 60000 });
+  const actual = await app.evaluate(({ app }) => ({ version: app.getVersion(), packaged: app.isPackaged }));
+  if (!actual.packaged || actual.version !== version) {
+    await app.close();
+    await rm(data, { recursive: true, force: true });
+    throw Error(`DeckPg 安装包版本不匹配：${JSON.stringify(actual)}，期望 ${version}`);
+  }
   const hostProcess = app.process();
   t.after(async () => {
     // A preview/quit failure must not leave another Dock instance behind after the test ends.
@@ -39,6 +57,7 @@ export async function launch(t, { executablePath = require('electron'), reducedP
     await app.close().catch(() => hostProcess.kill('SIGKILL'));
     clearTimeout(watchdog);
     await rm(data, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await cleanApplicationEntries();
   });
   const logs = [];
   app.process().stdout?.on('data', (d) => logs.push(d.toString()));
@@ -55,7 +74,14 @@ export async function launch(t, { executablePath = require('electron'), reducedP
     };
   });
   await page.reload();
-  await page.waitForSelector('.shelf-app');
+  // Service-only fixtures can have a ready desktop without any launcher icons.
+  await page.waitForSelector(openPlugin ? '.shelf-app' : '.desktop-surface');
+  for (const id of disabledPlugins) {
+    await page.evaluate(async id => {
+      const preview = await workDesk.plugins.preview(id, 'disable');
+      await workDesk.plugins.disable(id, preview.confirmationToken);
+    }, id);
+  }
   if (openPlugin) {
     await openWorkspace(page);
   }
@@ -91,26 +117,23 @@ export async function openWorkspace(page, id = owner) {
   if (await page.locator('#desktop').isVisible()) {
     await page.locator('#desktop').click();
   }
-  const running = page.locator(`.session-bubble[data-plugin="${id}"]`).first();
-  if (await running.count()) {
-    await running.click();
-  } else {
-    await page.locator(`.shelf-app[data-plugin="${id}"]`).click();
-  }
-  await page.waitForFunction(() => [...document.querySelectorAll('.application-window')].every((node) => ['open', 'minimized'].includes(node.dataset.phase)));
-  await page.frameLocator('iframe.plugin-view:visible').locator('h1, .workspace-tools').waitFor();
-  return page.frameLocator('iframe.plugin-view:visible');
+  await page.locator(`.shelf-app[data-plugin="${id}"]`).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.application-window')]
+    .every(node => ['open', 'inactive'].includes(node.dataset.phase)));
+  await page.frameLocator(`iframe.plugin-view:visible[src^="desk-plugin://${id}/"]`).locator('h1, .workspace-tools, #transcript').first().waitFor();
+  return page.frameLocator(`iframe.plugin-view:visible[src^="desk-plugin://${id}/"]`);
 }
 
 export async function openConfiguration(page) {
   await page.locator('.desktop-surface').dispatchEvent('contextmenu', { clientX: 500, clientY: 300 });
   await page.getByRole('menuitem', { name: '添加插件', exact: true }).click();
-  await page.getByRole('heading', { name: '插件中心', exact: true }).waitFor();
+  await page.locator('#settings-panel .plugin-toolbar').waitFor();
 }
 
 export async function toggleTheme(page) {
   await openConfiguration(page);
   await page.locator('#theme-settings').click();
-  await page.locator('#theme').click();
+  const current = await page.locator('html').getAttribute('data-theme');
+  await page.locator('#theme-mode').selectOption(current === 'dark' ? 'light' : 'dark');
   await page.getByRole('button', { name: '关闭配置', exact: true }).click();
 }

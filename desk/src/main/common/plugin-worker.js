@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { Storage } from './storage.js';
@@ -8,6 +9,9 @@ const methods = new Map();
 const views = [];
 const resources = new Map();
 const services = [];
+const capabilities = new Map();
+const controllers = new Map();
+const subscribers = new Set();
 const calls = new AsyncLocalStorage();
 const pending = new Map();
 let sequence = 0;
@@ -17,7 +21,9 @@ const send = (value) => { if (process.connected) { process.send(value); } };
 
 // The host associates parentId with its own invocation; callers cannot supply an origin or call chain.
 function serviceRequest(action, input, timeout = 5000) {
-  const parent = calls.getStore();
+  const context = calls.getStore();
+  // Servers and event listeners outlive their creating RPC; only live calls carry its deadline and lineage.
+  const parent = context?.completed ? undefined : context;
   const deadline = Math.min(parent?.deadline || Date.now() + 5000, Date.now() + timeout);
   return new Promise((resolve, reject) => {
     const requestId = ++sequence;
@@ -33,13 +39,14 @@ function serviceRequest(action, input, timeout = 5000) {
 async function activate({ id, directory, root }) {
   const storage = new Storage(root);
   const require = createRequire(import.meta.url);
-  const manifest = await storage.readJson(`packages/${id}/plugin.json`);
+  const manifest = JSON.parse(await readFile(join(directory, 'plugin.json'), 'utf8'));
   module = await import(pathToFileURL(join(directory, manifest.main)).href);
   if (typeof module.activate !== 'function' || typeof module.deactivate !== 'function') {
     throw Error('插件必须导出 activate 和 deactivate');
   }
   const context = {
     pluginId: id, storage,
+    host: { runtimeDirectory: () => serviceRequest('host.runtimeDirectory') },
     importModule: (name) => import(pathToFileURL(require.resolve(name)).href),
     emit: (channel, value) => send({ type: 'event', channel, value }),
     ownProcesses: (pids) => {
@@ -49,6 +56,39 @@ async function activate({ id, directory, root }) {
       send({ type: 'processes', pids });
     },
     resources: { report: (entries) => send({ type: 'resources', entries }) },
+    capabilities: {
+      async register(descriptor, handler) {
+        if (typeof handler !== 'function') { throw Error('能力需要处理函数'); }
+        const key = `${descriptor.id}:${descriptor.version}`;
+        if (capabilities.has(key)) { throw Error('能力已注册'); }
+        capabilities.set(key, handler);
+        try { return await serviceRequest('capabilities.register', descriptor); }
+        catch (error) { capabilities.delete(key); throw error; }
+      },
+      async upsert(descriptor, handler) {
+        if (typeof handler !== 'function') { throw Error('能力需要处理函数'); }
+        const key = `${descriptor.id}:${descriptor.version}`;
+        const previous = capabilities.get(key);
+        capabilities.set(key, handler);
+        try { return await serviceRequest('capabilities.upsert', descriptor); }
+        catch (error) {
+          if (previous) { capabilities.set(key, previous); } else { capabilities.delete(key); }
+          throw error;
+        }
+      },
+      async unregister(id, version) {
+        await serviceRequest('capabilities.unregister', { id, version });
+        capabilities.delete(`${id}:${version}`);
+      },
+      discover: (filter = {}) => serviceRequest('capabilities.discover', filter),
+      invoke(handle, input, options = {}) {
+        const request = handle?.handle ? handle : { handle, input, options };
+        return serviceRequest('capabilities.invoke', request);
+      },
+      getInvocation: invocationId => serviceRequest('capabilities.get', invocationId),
+      cancel: invocationId => serviceRequest('capabilities.cancel', invocationId),
+      subscribe(callback) { subscribers.add(callback); return () => subscribers.delete(callback); }
+    },
     services: {
       register({ contract, method }) {
         if (!/^[a-z][a-zA-Z0-9.-]{1,100}$/.test(contract) || !methods.has(method)
@@ -91,6 +131,37 @@ async function activate({ id, directory, root }) {
 }
 
 process.on('message', async (message) => {
+  if (message.type === 'capability.event') {
+    for (const callback of subscribers) {
+      try { callback(message.value); }
+      catch (error) { console.error('[capability:subscriber]', { message: error.message }); }
+    }
+    return;
+  }
+  if (message.type === 'capability.cancel') {
+    controllers.get(message.invocationId)?.abort();
+    return;
+  }
+  if (message.type === 'capability.invoke') {
+    const context = message.context;
+    const controller = new AbortController();
+    controllers.set(context.invocationId, controller);
+    await calls.run({ id: context.invocationId, deadline: context.deadline }, async () => {
+      try {
+        const handler = capabilities.get(`${context.capabilityId}:${context.version}`);
+        if (!handler) { throw Object.assign(Error('能力已撤销'), { code: 'CAPABILITY_CHANGED' }); }
+        const value = await handler(message.input, { ...context, signal: controller.signal });
+        send({ type: 'capability.result', invocationId: context.invocationId, value });
+      } catch (error) {
+        send({ type: 'capability.result', invocationId: context.invocationId,
+          error: { code: error.code || 'CAPABILITY_FAILED', message: error.message } });
+      } finally {
+        calls.getStore().completed = true;
+        controllers.delete(context.invocationId);
+      }
+    });
+    return;
+  }
   if (message.type === 'service.result') {
     const request = pending.get(message.requestId);
     if (request) {
@@ -101,7 +172,7 @@ process.on('message', async (message) => {
     return;
   }
   const { id, method, args, deadline } = message;
-  await calls.run({ id, deadline }, async () => {
+  await calls.run(method === '$activate' ? undefined : { id, deadline }, async () => {
     try {
       let value;
       if (method === '$activate') {
@@ -124,6 +195,10 @@ process.on('message', async (message) => {
       send({ id, value });
     } catch (error) {
       send({ id, error: { code: error.code || 'PLUGIN_ERROR', message: error.message, details: error.details } });
+    } finally {
+      if (calls.getStore()) {
+        calls.getStore().completed = true;
+      }
     }
   });
 });

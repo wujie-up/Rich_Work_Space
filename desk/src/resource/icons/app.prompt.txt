@@ -1,0 +1,6 @@
+DeckPg macOS application icon.
+Single-background correction: exec-12512f5a-0514-4800-938b-7f4b8618bec4.png
+Generated with image_gen from the approved artwork.
+Flat full-bleed white background; removed inset rounded plaque, borders, bevel and drop shadow. macOS supplies the outer icon presentation.
+Holographic tabletop with code and charts, short broad pale vortex, Codex, AI, blue whale, white workflow and Markdown tiles.
+Source PNG preserved; ICNS sizes generated with sips and iconutil.

@@ -14,6 +14,20 @@ export class Storage {
     return join(this.root, 'plugin-data', pluginId(id));
   }
 
+  // Prefer the current installation root while keeping existing packages readable in place.
+  async packageDirectory(id) {
+    const current = await this.path(`plugins/${pluginId(id)}`);
+    try {
+      await this.io.lstat(current);
+      return current;
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        throw error;
+      }
+      return this.path(`packages/${id}`);
+    }
+  }
+
   // Check every existing component, because even a controlled leaf can have a linked parent.
   async path(key) {
     const path = resolve(this.root, key);

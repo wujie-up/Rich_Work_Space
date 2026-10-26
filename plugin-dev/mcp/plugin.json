@@ -1,0 +1,31 @@
+{
+  "id": "mcp-services",
+  "name": "MCP 服务",
+  "version": "0.4.7",
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "type": "application",
+  "showIcon": true,
+  "loadOnStartup": true,
+  "background": "service",
+  "main": "src/main/common/index.js",
+  "renderer": "src/renderer/app.js",
+  "description": "部署 Python、JavaScript MCP 服务，转接第三方服务，统一管理并向 AI 提供工具。",
+  "capabilities": [
+    "mcp-services",
+    "agent-launch-config"
+  ],
+  "views": [
+    {
+      "id": "services",
+      "title": "MCP 服务",
+      "entry": "dist/renderer/index.html"
+    }
+  ],
+  "closeDescription": "停止 MCP 服务，保留连接配置。",
+  "icon": "ico/icon.svg",
+  "requiredHostFeatures": [
+    "desk.capabilities.v1"
+  ],
+  "singleInstance": true
+}

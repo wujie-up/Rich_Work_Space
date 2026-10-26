@@ -7,5 +7,5 @@ if (!source) {
 }
 const directory = resolve(source);
 const manifest = await inspectPackage(directory);
-const target = resolve(process.argv[3] || join('plugins/dist', `${manifest.id}-${manifest.version}.plg`));
+const target = resolve(process.argv[3] || join('plugin-dev/dist', `${manifest.id}-${manifest.version}.plg`));
 await packPackage(directory, target);

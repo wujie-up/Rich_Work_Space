@@ -18,7 +18,7 @@ test('desktop sources contain no business imports or platform branches outside o
       assert.doesNotMatch(source, /process\.platform/, path);
     }
   }
-  for (const path of await sources(resolve('plugins/plugins/ai-agent/src/main/common'))) {
+  for (const path of await sources(resolve('plugin-dev/ai-agent/src/main/common'))) {
     assert.doesNotMatch(await readFile(path, 'utf8'), /process\.platform/, path);
   }
   const desktop = await readFile(resolve('desk/dist/renderer/app.js'), 'utf8');

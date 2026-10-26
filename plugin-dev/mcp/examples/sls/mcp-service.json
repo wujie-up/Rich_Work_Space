@@ -1,0 +1,13 @@
+{
+  "name": "SLS 日志查询",
+  "language": "javascript",
+  "entry": "server.mjs",
+  "fields": [
+    { "name": "SLS_ENDPOINT", "label": "SLS 区域地址（如 us-west-1.log.aliyuncs.com）", "required": true },
+    { "name": "SLS_PROJECT", "label": "默认 Project（可选）" },
+    { "name": "SLS_LOGSTORE", "label": "默认 Logstore（可选）" },
+    { "name": "ALIBABA_CLOUD_ACCESS_KEY_ID", "label": "AccessKey ID", "secret": true, "required": true },
+    { "name": "ALIBABA_CLOUD_ACCESS_KEY_SECRET", "label": "AccessKey Secret", "secret": true, "required": true },
+    { "name": "ALIBABA_CLOUD_SECURITY_TOKEN", "label": "STS Token（可选）", "secret": true }
+  ]
+}

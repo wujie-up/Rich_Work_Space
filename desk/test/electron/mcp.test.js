@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { launch, openWorkspace } from './helpers.js';
-import { remoteFixture } from '../../../plugins/plugins/mcp/test/remote-fixture.mjs';
+import { remoteFixture } from '../../../plugin-dev/mcp/test/remote-fixture.mjs';
 
 await mkdir('.test-results/mcp-remote', {recursive:true});
 test('remote MCP UI enables address/key, AI discovers and calls without selection, reload preserves data', {timeout:90000}, async t => {

@@ -1,0 +1,17 @@
+{
+  "name": "线上数据库查询 · Metabase",
+  "language": "javascript",
+  "entry": "server.mjs",
+  "fields": [
+    {
+      "name": "METABASE_URL",
+      "label": "Metabase HTTPS 地址"
+    },
+    {
+      "name": "METABASE_SESSION",
+      "label": "Metabase Session",
+      "secret": true,
+      "required": true
+    }
+  ]
+}

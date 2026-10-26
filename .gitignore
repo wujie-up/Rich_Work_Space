@@ -42,3 +42,10 @@ test-results/
 *.tmp
 *.bak
 *.orig
+
+# Local acceptance evidence and runtime credentials must not enter source commits.
+/docs/design/*verification.md
+/docs/design/*validation.md
+**/auth.json
+**/.credentials.json
+**/plugin-data/

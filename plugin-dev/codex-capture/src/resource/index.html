@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent 抓包</title><link rel="stylesheet" href="./app.css"></head>
+<body>
+  <div class="toolbar"><button id="toggle" disabled>开始记录</button><label>Agent 窗口 <select id="agent-window"><option value="">选择 Agent 窗口</option></select></label><label>对话 <select id="conversation"><option value="">选择具体对话</option></select></label><button id="refresh">刷新目标</button></div>
+  <div id="status" role="status">正在连接插件</div>
+  <p class="hint">只记录所选对话。已有对话在下一轮自动接入，当前请求不被中断。停止或关闭抓包插件后，已有 Agent 连接继续转发。</p>
+  <div id="directory"></div><div id="error" role="alert"></div>
+  <main><aside><div id="count"></div><div id="records"></div><p id="empty">暂无记录。选择窗口和对话，开始记录后向该对话发送消息。</p></aside>
+  <section class="detail" aria-label="请求和响应内容"><div id="selection">选择一条请求查看上下文</div><div class="detailbar"><label><input type="checkbox" id="raw">原始 JSONL</label><button id="more" disabled>读取更多</button><span id="position"></span></div><pre id="output" tabindex="0" aria-label="上下文日志"></pre></section></main>
+  <script type="module" src="./app.js"></script>
+</body></html>

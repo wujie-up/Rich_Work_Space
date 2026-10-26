@@ -1,0 +1,28 @@
+:root { color-scheme: light dark; font: 13px system-ui, sans-serif; --bg: #fff; --fg: #171717; --muted: #666; --border: #ddd; --selected: #eee; }
+:root[data-theme="dark"] { --bg: #171717; --fg: #eee; --muted: #aaa; --border: #444; --selected: #333; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #171717; --fg: #eee; --muted: #aaa; --border: #444; --selected: #333; } }
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg); }
+body { display: flex; flex-direction: column; padding: 14px; gap: 10px; }
+button, select { color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 7px 10px; font: inherit; }
+select { max-width: min(340px, 75vw); }
+button { cursor: pointer; }
+button:hover, button.selected { background: var(--selected); }
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.toolbar, .detailbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hint, #directory, #position, #count { color: var(--muted); font-size: 12px; }
+.hint { margin: 0; line-height: 1.6; }
+#directory { overflow-wrap: anywhere; }
+#error { color: var(--fg); font-weight: 600; white-space: pre-wrap; }
+#error:empty { display: none; }
+main { min-height: 0; flex: 1; display: grid; grid-template-columns: 190px minmax(0, 1fr); border: 1px solid var(--border); border-radius: 6px; }
+aside { min-height: 0; overflow: auto; border-right: 1px solid var(--border); padding: 10px; }
+#records { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+#records button { text-align: left; white-space: pre-line; line-height: 1.6; width: 100%; }
+#empty { color: var(--muted); line-height: 1.7; }
+.detail { display: flex; flex-direction: column; min-height: 0; min-width: 0; padding: 10px; gap: 8px; }
+#selection { overflow-wrap: anywhere; font: 11px ui-monospace, monospace; color: var(--muted); }
+.detailbar label { display: flex; gap: 5px; align-items: center; }
+#output { flex: 1; min-height: 0; overflow: auto; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 ui-monospace, Menlo, monospace; }
+@media (max-width: 620px) { main { grid-template-columns: 130px minmax(0, 1fr); } body { padding: 8px; } aside, .detail { padding: 7px; } }

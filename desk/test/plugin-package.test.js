@@ -10,7 +10,7 @@ test('package validates manifest entry and every symlink before importing', asyn
   const source = await fixture(storage);
   assert.equal((await inspectPackage(source)).id, 'test-agent');
   await importPackage(storage, source);
-  assert.equal((await storage.readJson('packages/test-agent/plugin.json')).apiVersion, 2);
+  assert.equal((await storage.readJson('plugins/test-agent/plugin.json')).apiVersion, 2);
   await symlink('/tmp', join(source, 'escape'));
   await assert.rejects(inspectPackage(source), /符号链接/);
   const bad = await fixture(storage, 'bad-agent');
