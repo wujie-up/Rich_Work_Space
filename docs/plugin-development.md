@@ -37,9 +37,9 @@
 none 的 loadOnStartup 不执行代码、不创建进程，资源按访问读取。task 没有定时器或启动任务调度接口，只能由调用触发。
 旧 API 2 清单缺失属性时默认 application、true、true、service，保持原有行为。新包应显式写全，旧宿主不支持这些新语义。
 
-工作台顶部标签显示插件名称，插件外壳不提供最大化、最小化及独立标题控制栏；普通插件内容直接铺满标签下方工作空间，不保留外框、留白或外层拖动缩放，标签与内容之间不画横向分隔线。AI Agent、文本编辑器、工作流声明 `singleInstance:false`；MCP、Agent 抓包和资源监控声明 `singleInstance:true`。资源监控继续使用独立悬浮面板。此属性不改变共享后台、授权、配置与历史的数据归属。
+工作台顶部标签显示插件名称，插件外壳不提供最大化、最小化及独立标题控制栏；普通插件内容直接铺满标签下方工作空间，不保留外框、留白或外层拖动缩放，标签与内容之间不画横向分隔线。插件主画布背景与宿主选中标签保持一致：浅色 `#f7f7f7`、深色 `#181818`；卡片、编辑面板等内部层级可继续使用插件自己的主题变量。AI Agent、文本编辑器、工作流声明 `singleInstance:false`；MCP、Agent 抓包和资源监控声明 `singleInstance:true`。资源监控继续使用独立悬浮面板。此属性不改变共享后台、授权、配置与历史的数据归属。
 
-当前源码插件：AI Agent 0.3.0 与 MCP 0.4.0 均为 application / true / true / service；文本编辑器 0.1.3 为 application / true / false / service。MCP 已内置 AI 接入，不再需要独立 Adapter 图标或包。
+当前源码插件：AI Agent 与 MCP 均为 application / true / true / service；文本编辑器为 application / true / false / service。版本以各插件清单和 README 的版本表为准。MCP 已内置 AI 接入，不再需要独立 Adapter 图标或包。
 
 ## 包结构和清单
 

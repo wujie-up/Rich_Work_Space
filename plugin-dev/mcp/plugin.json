@@ -1,7 +1,7 @@
 {
   "id": "mcp-services",
   "name": "MCP 服务",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "apiVersion": 2,
   "dataVersion": 1,
   "type": "application",

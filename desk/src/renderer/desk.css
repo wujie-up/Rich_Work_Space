@@ -1,6 +1,6 @@
-:root{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color-scheme:dark;--window-controls-height:env(titlebar-area-height,0px);--bg:#181818;--panel:#222;--raised:#2b2b2b;--border:#383838;--text:#e9eaf0;--muted:#9297a5;--accent:#eee;--accent-bg:#555;--terminal:#222;--danger:#f49a9a}
+:root{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color-scheme:dark;--window-controls-height:env(titlebar-area-height,0px);--bg:#181818;--chrome:#222;--panel:#222;--raised:#2b2b2b;--border:#383838;--text:#e9eaf0;--muted:#9297a5;--accent:#eee;--accent-bg:#555;--terminal:#222;--danger:#f49a9a}
 
-:root[data-theme=light]{color-scheme:light;--bg:#f7f7f7;--panel:#fff;--raised:#efefef;--border:#ddd;--text:#292733;--muted:#797584;--accent:#444;--accent-bg:#444;--terminal:#fff;--danger:#bc4050}
+:root[data-theme=light]{color-scheme:light;--bg:#f7f7f7;--chrome:#efefef;--panel:#fff;--raised:#efefef;--border:#ddd;--text:#292733;--muted:#797584;--accent:#444;--accent-bg:#444;--terminal:#fff;--danger:#bc4050}
 
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font-size:13px}
@@ -17,7 +17,7 @@ button.icon-button{display:inline-grid;place-items:center;width:32px;height:32px
 button.icon-button:hover,button.icon-button[aria-pressed=true]{color:var(--text);filter:none}
 button.icon-button:focus-visible{outline:1px solid var(--muted);outline-offset:2px}
 .muted,.footnote{color:var(--muted);line-height:1.7}
-.titlebar{position:absolute;left:0;top:calc(-1 * var(--window-controls-height));width:var(--shelf-width);height:76px;padding:max(28px,var(--window-controls-height)) 8px 8px;-webkit-app-region:drag;display:flex;align-items:center;justify-content:center;font-size:clamp(8px,calc(var(--shelf-width) / 12),12px);letter-spacing:.6px;color:var(--text);text-align:center;overflow:hidden}
+.titlebar{position:absolute;left:0;top:calc(-1 * var(--window-controls-height));width:var(--shelf-width);height:76px;padding:max(28px,var(--window-controls-height)) 8px 8px;-webkit-app-region:drag;display:flex;align-items:center;justify-content:center;font-size:clamp(8px,calc(var(--shelf-width) / 12),12px);letter-spacing:.6px;color:var(--text);text-align:center;overflow:hidden;background:var(--chrome)}
 .titlebar::after{content:"";position:absolute;bottom:0;left:calc(50% - 12px);width:24px;height:1px;background:var(--border)}
 .titlebar>button{-webkit-app-region:no-drag;width:28px;height:28px;padding:3px;border:0;border-radius:0;background:transparent;color:var(--muted)}
 .titlebar>button:hover{color:var(--text);background:transparent;filter:none}
@@ -129,7 +129,7 @@ button.plugin-toggle:focus-visible{outline:1px solid var(--muted);outline-offset
 .plugin-grid[data-layout=list] .error-box{grid-column:2/4}
 
 /* The installed-app shelf stays above plugin windows. */
-.plugin-shelf{position:absolute;left:0;top:calc(76px - var(--window-controls-height));bottom:64px;width:var(--shelf-width);z-index:2147483647;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,calc(var(--shelf-icon-size,36px) + 16px)),1fr));align-content:start;align-items:start;gap:10px 4px;padding:8px 4px;overflow:clip;background:var(--bg)}
+.plugin-shelf{position:absolute;left:0;top:calc(76px - var(--window-controls-height));bottom:64px;width:var(--shelf-width);z-index:2147483647;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,calc(var(--shelf-icon-size,36px) + 16px)),1fr));align-content:start;align-items:start;gap:10px 4px;padding:8px 4px;overflow:clip;background:var(--chrome)}
 /* A narrow hit area keeps the divider easy to toggle without covering plugin content. */
 .shelf-toggle{position:absolute;left:calc(var(--shelf-width) - 7px);top:0;bottom:0;z-index:2147483647;width:14px;padding:0;border:0;border-radius:0;background:transparent;font-size:0;touch-action:none;cursor:ew-resize}
 .shelf-toggle::before{content:"";position:absolute;left:6px;top:0;bottom:0;width:1px;background:var(--border)}
@@ -175,7 +175,7 @@ button.plugin-toggle:focus-visible{outline:1px solid var(--muted);outline-offset
 
 .workspace-label{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:var(--muted);opacity:.35;font-size:14px;letter-spacing:1px;white-space:nowrap;pointer-events:none;user-select:none}
 
-.shelf-footer{position:absolute;bottom:0;left:0;width:var(--shelf-width);height:64px;display:flex;align-items:center;justify-content:center;z-index:2147483646;background:var(--bg)}
+.shelf-footer{position:absolute;bottom:0;left:0;width:var(--shelf-width);height:64px;display:flex;align-items:center;justify-content:center;z-index:2147483646;background:var(--chrome)}
 .shelf-footer .account-trigger{display:grid;place-items:center;width:34px;height:34px;padding:7px;border-radius:50%;border:1px solid var(--border);background:transparent;color:var(--muted)}
 .account-trigger svg,.account-menu svg{width:20px;height:20px;flex-shrink:0}
 .account-trigger:hover{color:var(--text);background:var(--raised);filter:none}
@@ -228,8 +228,8 @@ button.plugin-toggle:focus-visible{outline:1px solid var(--muted);outline-offset
 .plugin-overlay[data-collapsed=true] .overlay-actions .icon-button:first-child{display:none}
 
 /* Tabs reserve the top edge without changing each plugin's retained floating geometry. */
-.window-tabs{position:absolute;inset:0 0 auto;height:var(--tabs-height);display:flex;align-items:stretch;overflow-x:auto;scrollbar-width:thin;padding:0;border:0;background:var(--bg);z-index:2147483646;-webkit-app-region:drag}
-.window-tab{-webkit-app-region:no-drag;position:relative;display:flex;align-items:center;gap:12px;flex:0 0 auto;min-width:140px;max-width:240px;padding:0 6px 0 12px;color:var(--muted);background:var(--raised);cursor:pointer;font-size:11px;user-select:none}
+.window-tabs{position:absolute;inset:0 0 auto;height:var(--tabs-height);display:flex;align-items:stretch;overflow-x:auto;scrollbar-width:thin;padding:0;border:0;background:var(--chrome);z-index:2147483646;-webkit-app-region:drag}
+.window-tab{-webkit-app-region:no-drag;position:relative;display:flex;align-items:center;gap:12px;flex:0 0 auto;min-width:140px;max-width:240px;padding:0 6px 0 12px;color:var(--muted);background:var(--chrome);cursor:pointer;font-size:11px;user-select:none}
 .window-tab::after{content:"";position:absolute;right:0;top:25%;height:50%;width:1px;background:var(--muted);opacity:.5;pointer-events:none}
 .window-tab[aria-selected=true]{background:var(--bg);color:var(--text)}
 .window-tab:focus-visible{outline:1px solid var(--muted);outline-offset:-2px}

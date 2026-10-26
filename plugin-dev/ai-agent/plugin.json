@@ -1,7 +1,7 @@
 {
   "id": "ai-agent-sessions",
   "name": "AI Agent 会话",
-  "version": "0.6.7",
+  "version": "0.6.8",
   "type": "application",
   "showIcon": true,
   "loadOnStartup": true,

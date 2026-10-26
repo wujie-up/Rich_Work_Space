@@ -1,6 +1,6 @@
 * { box-sizing: border-box; }
-:root { font: 14px -apple-system, BlinkMacSystemFont, sans-serif; color: #26262b; background: #fafafa; color-scheme: light; --line: #dcdce0; --panel: #fff; --muted: #777780; }
-:root[data-theme="dark"] { color: #eee; background: #191919; color-scheme: dark; --line: #414146; --panel: #252525; --muted: #aaa; }
+:root { font: 14px -apple-system, BlinkMacSystemFont, sans-serif; color: #26262b; background: #f7f7f7; color-scheme: light; --line: #dcdce0; --panel: #fff; --muted: #777780; }
+:root[data-theme="dark"] { color: #eee; background: #181818; color-scheme: dark; --line: #414146; --panel: #252525; --muted: #aaa; }
 body { margin: 0; } main { max-width: 1120px; margin: auto; padding: 28px; }
 header { display: flex; align-items: center; justify-content: flex-end; gap: 16px; }
 p { color: var(--muted); line-height: 1.6; } .layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; margin-top: 24px; }

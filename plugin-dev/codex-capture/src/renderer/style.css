@@ -1,6 +1,6 @@
-:root { color-scheme: light dark; font: 13px system-ui, sans-serif; --bg: #fff; --fg: #171717; --muted: #666; --border: #ddd; --selected: #eee; }
-:root[data-theme="dark"] { --bg: #171717; --fg: #eee; --muted: #aaa; --border: #444; --selected: #333; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #171717; --fg: #eee; --muted: #aaa; --border: #444; --selected: #333; } }
+:root { color-scheme: light dark; font: 13px system-ui, sans-serif; --bg: #f7f7f7; --fg: #171717; --muted: #666; --border: #ddd; --selected: #eee; }
+:root[data-theme="dark"] { --bg: #181818; --fg: #eee; --muted: #aaa; --border: #444; --selected: #333; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #181818; --fg: #eee; --muted: #aaa; --border: #444; --selected: #333; } }
 * { box-sizing: border-box; }
 html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg); }
 body { display: flex; flex-direction: column; padding: 14px; gap: 10px; }

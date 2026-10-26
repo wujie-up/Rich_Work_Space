@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { _electron as electron } from 'playwright';
 import { createRequire } from 'node:module';
 import { resolve, join } from 'node:path';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 const require = createRequire(import.meta.url);
@@ -1417,4 +1417,41 @@ test('desktop UI: single-instance windows hide creation and retain the existing 
   await launcher.click();
   assert.equal(await root.count(), 1);
   assert.equal(await root.frameLocator('iframe').locator('body').getAttribute('data-retained'), 'single');
+});
+
+
+test('desktop UI: selected tabs share every plugin canvas while inactive tabs share the sidebar and strip', async t => {
+  const { page } = await launchDesktop(t);
+  await page.locator('.shelf-app').first().click();
+  await page.locator('.shelf-app').nth(1).click();
+  const palettes = [
+    'ai-agent/src/renderer/workspace.css', 'ai-agent/src/renderer/conversation.css',
+    'mcp/src/renderer/style.css', 'text-editor/src/renderer/app.css',
+    'work-flow/src/renderer/style.css', 'codex-capture/src/renderer/style.css', 'resource-monitor/src/renderer/style.css'
+  ];
+  const frame = page.locator('.application-window').last().frameLocator('iframe');
+  for (const [theme, canvas, chrome] of [['dark', 'rgb(24, 24, 24)', 'rgb(34, 34, 34)'],
+    ['light', 'rgb(247, 247, 247)', 'rgb(239, 239, 239)']]) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    const surfaces = await page.evaluate(() => {
+      const color = selector => getComputedStyle(document.querySelector(selector)).backgroundColor;
+      return { selected: color('.window-tab[aria-selected=true]'), inactive: color('.window-tab[aria-selected=false]'),
+        strip: color('.window-tabs'), shelf: color('.plugin-shelf'), footer: color('.shelf-footer'), home: color('.titlebar') };
+    });
+    assert.deepEqual(surfaces, { selected: canvas, inactive: chrome, strip: chrome, shelf: chrome, footer: chrome, home: chrome });
+    for (const path of palettes) {
+      const css = await readFile(resolve('plugin-dev', path), 'utf8');
+      const background = await frame.locator('body').evaluate((body, { css, theme }) => {
+        document.head.querySelectorAll('style').forEach(node => node.remove());
+        const style = document.createElement('style');
+        style.textContent = css;
+        document.head.append(style);
+        document.documentElement.dataset.theme = theme;
+        const color = getComputedStyle(body).backgroundColor;
+        return color === 'rgba(0, 0, 0, 0)' ? getComputedStyle(document.documentElement).backgroundColor : color;
+      }, { css, theme });
+      assert.equal(background, canvas, `${path}: ${theme} canvas`);
+    }
+    await page.screenshot({ path: `.test-results/unified-surfaces-${theme}.png` });
+  }
 });
