@@ -1,5 +1,5 @@
 appId: local.workdesk.desktop
-productName: DeckPg
+productName: DeskPG
 directories:
   output: desk/dist/releases.noindex
 electronDist: node_modules/electron/dist
@@ -9,7 +9,10 @@ files:
   - desk/src/preload.cjs
   - desk/dist/renderer/**
   - desk/dist/plugins/**
+  - web/src/server/**
+  - web/dist/**
   - package.json
+afterPack: desk/build/prepare-native-runtime.mjs
 afterAllArtifactBuild: desk/build/check-mac-installation.mjs
 asar: true
 asarUnpack:
@@ -22,10 +25,10 @@ mac:
   target:
     - dmg
     - zip
-  artifactName: 'DeckPg-${version}-${arch}.${ext}'
+  artifactName: 'DeskPG-${version}-${arch}.${ext}'
 dmg:
   sign: false
-  title: DeckPg
+  title: DeskPG
   contents:
     - x: 150
       y: 180

@@ -20,20 +20,38 @@ export class CaptureManager {
 
   key(record) { return this.relays.get(record.id)?.url || (this.enabled(record.id) ? `pending:${record.id}` : null); }
 
+  // Terminal and structured conversations share the public capture contract, not their storage models.
+  records() {
+    const conversations = this.conversations.records?.values() || this.conversations.list();
+    const terminals = [...(this.sessions?.active.values() || [])].map(session => ({ ...session,
+      engineId: session.adapterId, state: session.exited ? 'stopped' : 'running' }));
+    return [...conversations, ...terminals];
+  }
+
+  supported(record) {
+    return ['codex', 'claude'].includes(record.engineId || 'codex') && record.protocol !== 'legacy';
+  }
+
   catalog() {
     const groups = new Map([...this.conversations.windows].map(([id, value]) => [id, { id, name: value.name, conversations: [] }]));
-    for (const record of this.conversations.records?.values() || this.conversations.list()) {
+    for (const record of this.records()) {
       const id = record.windowId || 'legacy';
       if (!groups.has(id)) { groups.set(id, { id, name: id === 'legacy' ? '历史对话（未归属窗口）' : `窗口 ${id.slice(0, 8)}`, conversations: [] }); }
       groups.get(id).conversations.push({ id: record.id, name: record.name, engineId: record.engineId || 'codex', state: record.state,
-        supported: ['codex', 'claude'].includes(record.engineId || 'codex') });
+        supported: this.supported(record) });
+    }
+    // The host supplies liveness and names; these bindings only associate retained history with its current views.
+    for (const group of groups.values()) {
+      group.hostWindowIds = [...(this.conversations.windowViews || [])].filter(([, id]) => id === group.id).map(([id]) => id);
     }
     return { version: 2, instanceId: this.instanceId, windows: [...groups.values()] };
   }
 
   record(input) {
     if (input.instanceId !== this.instanceId) { throw Error('Agent 运行实例已变化，请刷新目标'); }
-    const record = this.conversations.records ? this.conversations.records.get(input.conversationId) : this.conversations.read(input.conversationId);
+    const record = this.sessions?.active.has(input.conversationId)
+      ? this.records().find(record => record.id === input.conversationId)
+      : this.conversations.records ? this.conversations.records.get(input.conversationId) : this.conversations.read(input.conversationId);
     if (!record || (record.windowId || 'legacy') !== input.windowId) { throw Error('目标对话不属于指定窗口'); }
     return record;
   }
@@ -41,10 +59,10 @@ export class CaptureManager {
   status(record) {
     const relay = this.relays.get(record.id);
     const enabled = this.enabled(record.id);
-    const connected = Boolean(relay && this.conversations.engines.get(record.id)?.captureKey === relay.url);
+    const connected = Boolean(relay && (record.captureKey || this.conversations.engines.get(record.id)?.captureKey) === relay.url);
     let state = enabled ? 'waiting' : 'stopped';
     if (enabled && connected) { state = relay.log.sequence > (this.leases.get(record.id)?.baseline || 0) ? 'captured' : 'connected'; }
-    return { enabled, state, running: record.state === 'running', supported: ['codex', 'claude'].includes(record.engineId || 'codex'),
+    return { enabled, state, running: record.state === 'running', supported: this.supported(record),
       logDirectory: join(this.root, record.id), error: relay?.log.error || null };
   }
 
@@ -54,7 +72,7 @@ export class CaptureManager {
     if (input.action === 'status') { return this.status(record); }
     if (input.action === 'configure') {
       if (!uuid(input.ownerId) || typeof input.enabled !== 'boolean') { throw Error('抓包控制参数无效'); }
-      if (!['codex', 'claude'].includes(record.engineId || 'codex')) { throw Error('该引擎尚不支持网络抓包'); }
+      if (!this.supported(record)) { throw Error('该引擎尚不支持网络抓包'); }
       const previous = this.leases.get(record.id);
       if (this.enabled(record.id) && previous.ownerId !== input.ownerId) { throw Error('该对话已被其他抓包实例占用'); }
       this.leases.set(record.id, { ownerId: input.ownerId, expires: input.enabled ? this.now() + 20000 : 0,
@@ -73,7 +91,9 @@ export class CaptureManager {
   async target(record, launch) {
     if (this.destination) { return this.destination(record, launch); }
     if (record.engineId === 'claude') {
-      return { upstream: 'https://api.anthropic.com', paths: /^\/v1\/(messages(?:\/count_tokens)?|models)$/ };
+      // Capture must preserve the provider address, including compatibility prefixes such as /anthropic.
+      return { upstream: launch.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
+        paths: /^\/v1\/(messages(?:\/count_tokens)?|models)$/ };
     }
     const auth = JSON.parse(await readFile(join(launch.env.CODEX_HOME, 'auth.json'), 'utf8').catch(error => {
       if (error.code === 'ENOENT') { return '{}'; }
@@ -83,7 +103,8 @@ export class CaptureManager {
   }
 
   async prepare(record, launch) {
-    if (!this.relays.has(record.id) && this.enabled(record.id)) {
+    if (!this.relays.has(record.id) && this.supported(record)
+      && (this.enabled(record.id) || record.protocol === 'managed-terminal')) {
       if (!this.pending.has(record.id)) {
         this.pending.set(record.id, (async () => {
           const destination = await this.target(record, launch);
@@ -101,6 +122,14 @@ export class CaptureManager {
     return record.engineId === 'claude'
       ? { key: relay.url, args: launch.args, env: { ...launch.env, ANTHROPIC_BASE_URL: relay.url } }
       : { key: relay.url, args: [...launch.args, '-c', `openai_base_url=${JSON.stringify(relay.url)}`], env: launch.env };
+  }
+
+  // Release only after the terminal process has stopped, keeping in-flight requests intact.
+  async release(id) {
+    await this.pending.get(id);
+    await this.relays.get(id)?.close();
+    this.relays.delete(id);
+    this.leases.delete(id);
   }
 
   async close() {

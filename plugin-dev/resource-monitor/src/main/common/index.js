@@ -8,7 +8,7 @@ export async function activate(context) {
   monitor = new ResourceMonitor({ directory: () => context.host.runtimeDirectory(),
     platform: createPlatform({ ownProcesses: pids => context.ownProcesses(pids) }),
     readSettings: () => context.storage.readJson(key, {}), writeSettings: value => context.storage.writeJson(key, value) });
-  context.methods.register('monitor.snapshot', () => monitor.snapshot());
+  context.methods.register('monitor.snapshot', options => monitor.snapshot(options));
   context.methods.register('monitor.settings', () => ({ ...monitor.settings }));
   context.methods.register('monitor.saveSettings', change => monitor.updateSettings(change), { exclusive: true });
   context.lifecycle.register({ snapshot: () => [], stop: () => monitor.stop() });

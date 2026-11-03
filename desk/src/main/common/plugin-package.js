@@ -1,4 +1,5 @@
 import { cp, lstat, readdir, readFile, mkdir, rename, rm, mkdtemp, copyFile, writeFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { tmpdir } from 'node:os';
 import { create, list, extract } from 'tar';
@@ -26,8 +27,19 @@ async function inspectFiles(dir, prefix = '') {
 
 // Hashes detect incomplete extraction and changed payloads; they are not a publisher signature.
 async function fileHashes(directory, files) {
-  return Object.fromEntries(await Promise.all(files.map(async name =>
-    [name, createHash('sha256').update(await readFile(join(directory, name))).digest('hex')])));
+  const hashes = new Array(files.length);
+  const remaining = files.entries();
+  // Bound open files and buffers independently of package size without weakening integrity checks.
+  await Promise.all(Array.from({ length: Math.min(files.length, 4) }, async () => {
+    for (const [index, name] of remaining) {
+      const hash = createHash('sha256');
+      for await (const chunk of createReadStream(join(directory, name))) {
+        hash.update(chunk);
+      }
+      hashes[index] = [name, hash.digest('hex')];
+    }
+  }));
+  return Object.fromEntries(hashes);
 }
 
 export async function inspectPackage(source) {
@@ -112,8 +124,8 @@ export async function withPackageSource(source, action) {
       throw fail('INVALID_PACKAGE', invalid);
     }
     await extract({ file: archive, cwd: directory, strict: true, noChmod: true });
-    await inspectPackage(directory);
-    return await action(directory);
+    const manifest = await inspectPackage(directory);
+    return await action(directory, manifest);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

@@ -1,3 +1,4 @@
+import { showPopup } from '../resource/popup.js';
 import { message, t } from './i18n.js';
 export const api = window.workDesk;
 export function el(tag, attributes = {}, ...children) {
@@ -50,6 +51,11 @@ export function iconButton(path, label, action, className = '') {
   control.append(svg);
   return control;
 }
+// Boolean preferences share switch semantics without changing their persistence callbacks.
+export function switchButton(label, checked, action, className = '') {
+  return el('button', { type: 'button', role: 'switch', class: className, 'aria-checked': String(checked),
+    'aria-label-message': label, 'title-message': label, onclick: () => run(action) });
+}
 export async function run(action) {
   try {
     return await action();
@@ -67,7 +73,7 @@ export function toast(message) {
 }
 
 // All confirmations use DOM text nodes; CLI output and plugin names are never HTML.
-export function modal(title, build, { wide = false, compact = false } = {}) {
+export function modal(title, build, { wide = false, compact = false, placement = 'anchor', dismissible = true } = {}) {
   return new Promise((resolve) => {
     const dialog = el('dialog', { class: compact ? 'compact' : wide ? 'wide' : '', 'aria-label-message': title });
     const form = el('form', { method: 'dialog' });
@@ -75,23 +81,24 @@ export function modal(title, build, { wide = false, compact = false } = {}) {
     const actions = el('div', { class: 'dialog-actions' });
     const finish = (value) => { dialog.close(); dialog.remove(); resolve(value); };
     if (!compact) {
-      form.append(el('div', { class: 'dialog-heading' }, el('h2', { message: title }), iconButton(icons.close, '关闭', () => finish(null))));
+      form.append(el('div', { class: 'dialog-heading' }, el('h2', { message: title }),
+        dismissible ? iconButton(icons.close, '关闭', () => finish(null)) : null));
     }
     form.append(body, actions);
     dialog.append(form);
     document.body.append(dialog);
-    dialog.addEventListener('cancel', (event) => { event.preventDefault(); finish(null); });
+    dialog.addEventListener('cancel', (event) => { event.preventDefault(); if (dismissible) { finish(null); } });
     form.addEventListener('submit', (event) => event.preventDefault());
     build({ body, actions, finish, dialog });
-    dialog.showModal();
+    showPopup(dialog, document.activeElement, { placement });
   });
 }
 export function field(label, input) {
   return el('label', { class: 'field' }, el('span', { message: label }), input);
 }
-export function ask(title, value = '') {
+export function ask(title, value = '', maxlength = 60) {
   return modal(title, ({ body, actions, finish }) => {
-    const input = el('input', { value, required: true, maxlength: 60 });
+    const input = el('input', { value, required: true, maxlength });
     body.append(field('名称', input));
     actions.append(iconButton(icons.cancel, '取消', () => finish(null)), iconButton(icons.check, '保存', () => {
       if (input.reportValidity()) {
@@ -100,9 +107,9 @@ export function ask(title, value = '') {
     }));
   });
 }
-export function confirm(title, message) {
+export function confirm(title, message, options = {}) {
   return modal(title, ({ body, actions, finish }) => {
     body.append(el('p', { message }));
     actions.append(iconButton(icons.cancel, '取消', () => finish(false)), iconButton(icons.check, '确认', () => finish(true)));
-  });
+  }, options);
 }

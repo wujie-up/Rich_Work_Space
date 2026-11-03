@@ -52,7 +52,7 @@ export async function activate(context) {
   return archive;
 }
 
-test('最新 DeckPg：分类配置保存恢复、真实 AI 提供方、跨 RPC 长任务问答与停止', { timeout: 180000 }, async t => {
+test('最新 DeskPG：分类配置保存恢复、真实 AI 提供方、跨 RPC 长任务问答与停止', { timeout: 180000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'deck-workflow-agent-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const archive = await provider(root);

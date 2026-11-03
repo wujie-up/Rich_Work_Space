@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "feishu-doc": {
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/feishu-doc/server.cjs"],
+      "env": {
+        "APP_ID": "在本机填写应用ID",
+        "APP_SECRET": "在本机填写应用密钥",
+        "FEISHU_DOC_ENGINE_DIR": "/absolute/path/node_modules/@larksuiteoapi/lark-mcp",
+        "FEISHU_DOC_DATA_DIR": "/absolute/path/to/owned/feishu-doc-data"
+      }
+    }
+  }
+}

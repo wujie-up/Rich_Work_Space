@@ -1,0 +1,16 @@
+{
+  "pluginId": "message-bridge",
+  "version": "0.1.1",
+  "files": 7894,
+  "integrity": "sha256 verified",
+  "bytes": 19441005,
+  "sha256": "82738f422d38e10e0c3772c36a93073edfeb4606700a158cc8a4563e13206736",
+  "sdkModulesLoaded": [
+    "wechaty",
+    "wechaty-puppet-service",
+    "wechaty-puppet-wechat4u",
+    "@larksuiteoapi/node-sdk",
+    "qrcode"
+  ],
+  "webPuppet": "WechatWebPuppet"
+}

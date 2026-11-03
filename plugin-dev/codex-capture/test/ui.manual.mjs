@@ -32,10 +32,16 @@ async function bridge(page, handler) {
 }
 try {
   const page = await browser.newPage();
-  const windows = [{ id: 'window-one', name: '窗口 1', conversations: [
+  const windows = [{ id: 'window-one', name: '历史窗口 7', hostWindowIds: ['host-one'], conversations: [
     { id: 'one-codex', name: '窗口一 Codex', engineId: 'codex', supported: true },
     { id: 'one-claude', name: '窗口一 Claude', engineId: 'claude', supported: true }] },
-  { id: 'window-two', name: '窗口 2', conversations: [{ id: 'two-codex', name: '窗口二 Codex', engineId: 'codex', supported: true }] }];
+  { id: 'window-two', name: '历史窗口 9', hostWindowIds: ['host-two'], conversations: [{ id: 'two-codex', name: '窗口二 Codex', engineId: 'codex', supported: true }] },
+  { id: 'closed', name: '已关闭窗口', hostWindowIds: ['host-closed'], conversations: [] },
+  { id: 'empty-history', name: '空历史窗口', conversations: [] },
+  { id: 'legacy', name: '历史对话（未归属窗口）', conversations: [{ id: 'old', name: '旧对话', supported: true }] }];
+  let liveWindows = [{ id: 'host-one', pluginId: 'ai-agent', name: '窗口1' },
+    { id: 'host-two', pluginId: 'ai-agent', name: '支付排查' },
+    { id: 'unrelated', pluginId: 'other-agent', name: '其他插件窗口' }];
   let target = null;
   let enabled = false;
   const status = () => ({ enabled, state: enabled ? 'captured' : 'stopped', target, logDirectory: '/private/fixture/capture' });
@@ -44,7 +50,9 @@ try {
     { type: 'request.text', text: `${target.conversationId} <script>window.injected=true</script>` },
     { type: 'response.text', text: `RESPONSE_${target.conversationId}` }, { type: 'response.end' }
   ].map(event => JSON.stringify(event)).join('\n') + '\n';
-  await bridge(page, async (_method, [method, args]) => {
+  await bridge(page, async (hostMethod, values) => {
+    if (hostMethod === 'host.listWindows') { return liveWindows; }
+    const [method, args] = values;
     if (method === 'capture.sources') { return [{ version: 2, pluginId: 'ai-agent', instanceId: 'instance', windows }]; }
     if (method === 'capture.status') { return status(); }
     if (method === 'capture.configure') { target = args[0].target || target; enabled = args[0].enabled; return status(); }
@@ -54,36 +62,88 @@ try {
   });
   await page.goto(base);
   await page.waitForFunction(() => document.querySelector('#agent-window').options.length === 3);
+  assert.deepEqual(await page.locator('#agent-window option').allTextContents(), ['选择 Agent 窗口', '窗口1', '支付排查']);
   assert.equal(await page.locator('#upstream').count(), 0);
   assert.equal(await page.locator('#toggle').isDisabled(), true);
-  await page.selectOption('#agent-window', '0/window-one');
+  await page.selectOption('#agent-window', '0/host-one');
   await page.selectOption('#conversation', 'one-codex');
   await page.waitForFunction(() => !document.querySelector('#toggle').disabled);
   await page.locator('#toggle').click();
   await page.waitForFunction(() => document.querySelector('#status').textContent.includes('已捕获'));
   await page.waitForFunction(() => document.querySelector('#output').textContent.includes('RESPONSE_one-codex'));
   assert.equal(await page.evaluate(() => window.injected), undefined);
+  assert.ok((await page.locator('#request-output').textContent()).includes('one-codex'));
+  assert.ok(!(await page.locator('#request-output').textContent()).includes('RESPONSE_'));
+  assert.ok(!(await page.locator('#response-output').textContent()).includes('request.start'));
+  const requestBounds = await page.locator('#request-pane').boundingBox();
+  const responseBounds = await page.locator('#response-pane').boundingBox();
+  assert.ok(responseBounds.x > requestBounds.x + requestBounds.width);
+  for (const direction of ['request', 'response']) {
+    await page.selectOption('#direction', direction);
+    assert.equal(await page.locator(`#${direction}-pane`).isVisible(), true);
+    assert.equal(await page.locator(`#${direction === 'request' ? 'response' : 'request'}-pane`).isVisible(), false);
+    assert.ok((await page.locator(`#${direction}-pane`).boundingBox()).width > requestBounds.width * 1.8);
+  }
+  await page.selectOption('#direction', 'both');
+  await page.locator('#raw').check();
+  await page.waitForFunction(() => document.querySelector('#request-output').textContent.includes('"type":"request.start"'));
+  assert.ok((await page.locator('#response-output').textContent()).includes('"type":"response.text"'));
+  assert.ok(!(await page.locator('#response-output').textContent()).includes('"type":"request.'));
+  await page.locator('#raw').uncheck();
+  await page.waitForFunction(() => document.querySelector('#response-output').textContent.includes('[response.text]'));
   await page.selectOption('#conversation', 'one-claude');
   await page.waitForFunction(() => document.querySelector('#output').textContent.includes('RESPONSE_one-claude'));
   assert.ok(!(await page.locator('#output').textContent()).includes('one-codex'));
-  await page.selectOption('#agent-window', '0/window-two');
+  await page.selectOption('#agent-window', '0/host-two');
   await page.selectOption('#conversation', 'two-codex');
   await page.waitForFunction(() => document.querySelector('#output').textContent.includes('RESPONSE_two-codex'));
   assert.ok(!(await page.locator('#output').textContent()).includes('one-claude'));
+  liveWindows[1].name = '重命名后的窗口';
+  await page.waitForFunction(() => document.querySelector('#agent-window').selectedOptions[0]?.textContent === '重命名后的窗口');
+  assert.equal(await page.locator('#conversation').inputValue(), 'two-codex');
+  liveWindows = liveWindows.filter(window => window.id !== 'host-two');
+  await page.waitForFunction(() => document.querySelector('#agent-window').options.length === 2);
+  await page.waitForFunction(() => document.querySelector('#toggle').disabled && !document.querySelector('#output').textContent.includes('two-codex'));
+  assert.equal(enabled, false, 'closing the selected desktop window stops recording and clears stale output');
+  await page.selectOption('#agent-window', '0/host-one');
+  await page.selectOption('#conversation', 'one-codex');
+  await page.waitForFunction(() => document.querySelector('#output').textContent.includes('RESPONSE_one-codex'));
   for (const [width, height] of [[1100, 760], [560, 680]]) {
     await page.setViewportSize({ width, height });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({ path: `.test-results/agent-capture-v2-${width}.png` });
   }
 
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+  for (const direction of ['both', 'request', 'response']) {
+    await page.selectOption('#direction', direction);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.screenshot({ path: `.test-results/agent-capture-${direction}-dark.png` });
+  }
+
+  await page.locator('#toggle').click();
+  await page.waitForFunction(() => document.querySelector('#status').textContent.includes('已捕获'));
+  liveWindows = [];
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector('#status').textContent.includes('请选择') && document.querySelector('#toggle').disabled);
+  assert.equal(enabled, false, 'reloading the capture view cannot keep recording a window that has already closed');
+
   const groups = new Map();
+  const bindings = new Map();
   const records = new Map();
   const engine = id => ({ id, name: id, state: 'ready', pin: { version: 'fixture', platform: 'darwin', url: 'local', sha256: 'fixture' },
     installation: { state: 'idle' }, sources: { auth: 'fixture', skills: [], rules: [] } });
-  const aiHandler = async (method, values) => {
+  const aiHandler = async (method, values, hostWindowId) => {
     if (method === 'host.getLaunchContext') { return null; }
+    if (method === 'host.getWindowContext') { return { id: hostWindowId }; }
     const [name, args] = values;
-    if (name === 'conversation.registerWindow') { const { id } = args[0]; if (!groups.has(id)) { groups.set(id, { id, name: `窗口 ${groups.size + 1}` }); } return groups.get(id); }
+    if (name === 'conversation.registerWindow') {
+      const { id, hostWindowId } = args[0];
+      bindings.set(hostWindowId, id);
+      if (!groups.has(id)) { groups.set(id, { id, name: `窗口 ${groups.size + 1}` }); }
+      return groups.get(id);
+    }
     if (name === 'conversation.listWindows') { return [...groups.values()]; }
     if (name === 'conversation.list') { return [...records.values()]; }
     if (name === 'engines.list') { return [engine('codex'), engine('claude')]; }
@@ -94,8 +154,8 @@ try {
   };
   const one = await browser.newPage();
   const two = await browser.newPage();
-  await bridge(one, aiHandler);
-  await bridge(two, aiHandler);
+  await bridge(one, (method, values) => aiHandler(method, values, 'ai-host-one'));
+  await bridge(two, (method, values) => aiHandler(method, values, 'ai-host-two'));
   await one.goto(`${base}/ai/conversation.html`);
   await one.waitForFunction(() => document.querySelector('#send').disabled === false);
   await one.locator('#new').click();
@@ -108,6 +168,8 @@ try {
   await two.waitForFunction(() => document.querySelector('#history').options.length === 2);
   const secondWindow = await two.locator('#window-group').inputValue();
   assert.notEqual(firstWindow, secondWindow);
+  assert.equal(bindings.get('ai-host-one'), firstWindow);
+  assert.equal(bindings.get('ai-host-two'), secondWindow);
   await one.reload();
   await one.waitForFunction(() => document.querySelector('#history').options.length === 2);
   assert.equal(await one.locator('#window-group').inputValue(), firstWindow);
@@ -116,5 +178,6 @@ try {
   await one.selectOption('#window-group', secondWindow);
   await one.waitForFunction(() => document.querySelector('#history').textContent.includes('对话 2'));
   assert.ok(!(await one.locator('#history').textContent()).includes('对话 1'));
-  console.log('PASS: capture window->dialogue selection, no mixed output, safe text, responsive layouts; AI groups isolate histories, survive reload and reopen historical groups');
+  assert.equal(bindings.get('ai-host-one'), secondWindow);
+  console.log('PASS: separate request/response panes and single-direction filters, raw JSONL routing; capture window->dialogue selection, no mixed output, safe text, responsive layouts; AI groups isolate histories, survive reload and reopen historical groups');
 } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }

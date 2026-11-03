@@ -1,3 +1,6 @@
+import { McpRelay } from './mcp-relay.js';
+import { filterLaunchServices } from './mcp-selection.js';
+
 // Launch providers are optional; an installed provider's failure must remain visible to the caller.
 export async function resolveLaunchConfig(context, adapterId, input = {}) {
   if (!['codex', 'claude'].includes(adapterId)) { return []; }
@@ -7,7 +10,8 @@ export async function resolveLaunchConfig(context, adapterId, input = {}) {
   if (providers.length > 1) {
     throw Object.assign(Error('多个插件提供 AI 启动配置，请仅启用一个 Adapter'), { code: 'LAUNCH_PROVIDER_CONFLICT' });
   }
-  const result = await context.services.invoke(providers[0], { clientId: adapterId, cwd: input.cwd, mode: input.mode }, { timeout: Math.max(1, Math.min(4500, deadline - Date.now())) });
+  const result = await context.services.invoke(providers[0], { clientId: adapterId, cwd: input.cwd, mode: input.mode,
+    ...(input.mcpServerName ? { serverName: input.mcpServerName } : {}) }, { timeout: Math.max(1, Math.min(4500, deadline - Date.now())) });
   if (adapterId === 'claude') {
     const servers = result?.mcpConfig?.mcpServers;
     if (result?.version !== 1 || !servers || typeof servers !== 'object' || Array.isArray(servers)
@@ -26,4 +30,21 @@ export async function resolveLaunchConfig(context, adapterId, input = {}) {
     throw Object.assign(Error('AI 启动配置契约无效'), { code: 'LAUNCH_CONFIG_INVALID' });
   }
   return result.overrides;
+}
+
+// Read-only tasks retain capability policy; ordinary Codex chats and authorized background work use native callbacks.
+export async function createConversationMcp(context, record, launch) {
+  if ((record.engineId || 'codex') !== 'codex' || record.task && !record.task.background) { return null; }
+  const config = filterLaunchServices('codex', await resolveLaunchConfig(context, 'codex', record),
+    record.task?.background ? undefined : launch.launchSettings?.mcp);
+  const relay = new McpRelay({ pluginId: context.pluginId, sessionId: record.id, importModule: context.importModule,
+    resolve: name => resolveLaunchConfig(context, 'codex', { ...record, mcpServerName: name }) });
+  try {
+    const overrides = await relay.start('codex', config);
+    return { args: overrides.flatMap(value => ['-c', value]), connection: relay };
+  } catch (error) {
+    await relay.close();
+    console.error('[ai:conversation-mcp-connect-failed]', { pluginId: context.pluginId, conversationId: record.id, error });
+    throw error;
+  }
 }

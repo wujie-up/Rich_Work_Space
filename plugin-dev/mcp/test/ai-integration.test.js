@@ -8,12 +8,18 @@ import { Plugins } from '../../../desk/src/main/common/plugins.js';
 test('MCP alone publishes AI launch config and imports old Adapter selections without reading its data', async t => {
   const storage = await temporaryStore(t);
   const plugins = new Plugins({ storage });
+  await storage.writeJson('plugin-data/mcp-services/builtin-tools.json', { removed: true, feishuEnabled: false, computerEnabled: false });
   t.after(async () => {
     for (const runtime of plugins.loaded.values()) {
       await runtime.close();
     }
   });
   await plugins.install(resolve('plugin-dev/mcp'));
+  await plugins.enable('mcp-services');
+  const capabilities = plugins.capabilities.discover().providers.map(value => value.descriptor.id);
+  assert.ok(capabilities.includes('mcp.browser.control'));
+  assert.equal(capabilities.includes('mcp.feishu.document.read'), false);
+  assert.equal(capabilities.includes('mcp.computer.control'), false);
   const peer = await fixture(storage, 'ai-consumer');
   await writeFile(join(peer, 'index.mjs'), `export function activate(c) {
     c.methods.register('test.discover', () => c.services.discover('agent.launch-config.v1'));
@@ -23,6 +29,7 @@ test('MCP alone publishes AI launch config and imports old Adapter selections wi
     });
   } export function deactivate() {}`);
   await plugins.install(peer);
+  await plugins.enable('ai-consumer');
   assert.equal((await plugins.invoke('ai-consumer', 'test.discover'))[0].pluginId, 'mcp-services');
   assert.deepEqual(await plugins.invoke('ai-consumer', 'test.launch'), { version: 1, overrides: [] });
   const selection = [{ pluginId: 'mcp-services', serviceId: 'echo' }];

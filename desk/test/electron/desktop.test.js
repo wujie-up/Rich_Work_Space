@@ -9,7 +9,7 @@ import { launch, owner, configure, create, output, alive, openConfiguration } fr
 test('desktop: confirmed disable retries transient plugin busy and reports persistent contention', { timeout: 60000 }, async (t) => {
   const packaged = process.env.WORK_DESK_PACKAGED === '1';
   const { app, page } = await launch(t, { openPlugin: false, ...(packaged
-    ? { executablePath: resolve('desk/dist/releases.noindex/mac-arm64/DeckPg.app/Contents/MacOS/DeckPg'), reducedPath: true } : {}) });
+    ? { executablePath: resolve('desk/dist/releases.noindex/mac-arm64/DeskPG.app/Contents/MacOS/DeskPG'), reducedPath: true } : {}) });
   await app.evaluate(({ ipcMain }) => {
     const original = ipcMain._invokeHandlers.get('work-desk:invoke');
     let busy = true;
@@ -49,7 +49,7 @@ test('desktop: confirmed disable retries transient plugin busy and reports persi
 test('desktop: blank desktop, shelf icons, context menus, configuration and drag to open preserve plugin data', { timeout: 120000 }, async (t) => {
   const packaged = process.env.WORK_DESK_PACKAGED === '1';
   const { page } = await launch(t, { openPlugin: false, ...(packaged
-    ? { executablePath: resolve('desk/dist/releases.noindex/mac-arm64/DeckPg.app/Contents/MacOS/DeckPg'), reducedPath: true } : {}) });
+    ? { executablePath: resolve('desk/dist/releases.noindex/mac-arm64/DeskPG.app/Contents/MacOS/DeskPG'), reducedPath: true } : {}) });
   await page.locator('.desktop-surface').waitFor({ timeout: 5000 });
   assert.equal(await page.locator('aside, #navigation').count(), 0);
   const icon = page.locator(`.shelf-app[data-plugin="${owner}"]`);
@@ -122,7 +122,7 @@ test('desktop: blank desktop, shelf icons, context menus, configuration and drag
 test('desktop: workspace pages and tabs retain live plugin views', { timeout: 120000 }, async (t) => {
   const packaged = process.env.WORK_DESK_PACKAGED === '1';
   const { page } = await launch(t, { openPlugin: false, ...(packaged
-    ? { executablePath: resolve('desk/dist/releases.noindex/mac-arm64/DeckPg.app/Contents/MacOS/DeckPg'), reducedPath: true } : {}) });
+    ? { executablePath: resolve('desk/dist/releases.noindex/mac-arm64/DeskPG.app/Contents/MacOS/DeskPG'), reducedPath: true } : {}) });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   const icon = page.locator(`.shelf-app[data-plugin="${owner}"]`);
@@ -210,7 +210,7 @@ test('desktop: retained windows stay inside a resized desktop', { timeout: 60000
 test('desktop: closing a plugin shell confirms before stopping its processes and all windows', { timeout: 60000 }, async (t) => {
   const packaged = process.env.WORK_DESK_PACKAGED === '1';
   const { page } = await launch(t, { ...(packaged
-    ? { executablePath: resolve('desk/dist/releases.noindex/mac-arm64/DeckPg.app/Contents/MacOS/DeckPg') } : {}) });
+    ? { executablePath: resolve('desk/dist/releases.noindex/mac-arm64/DeskPG.app/Contents/MacOS/DeskPG') } : {}) });
   await configure(page, { child: true });
   const session = await create(page, '外壳关闭归档');
   const snapshot = await output(page, session.id, /CHILD=(\d+)/);
@@ -252,7 +252,7 @@ test('desktop: closing a plugin shell confirms before stopping its processes and
 test('desktop: collapsible plugin shelf opens enabled apps and hides disabled entries', { timeout: 60000 }, async (t) => {
   const packaged = process.env.WORK_DESK_PACKAGED === '1';
   const { page } = await launch(t, { openPlugin: false, ...(packaged
-    ? { executablePath: resolve('desk/dist/releases.noindex/mac-arm64/DeckPg.app/Contents/MacOS/DeckPg') } : {}) });
+    ? { executablePath: resolve('desk/dist/releases.noindex/mac-arm64/DeskPG.app/Contents/MacOS/DeskPG') } : {}) });
   const shelf = page.getByRole('navigation', { name: '已安装插件' });
   const entry = shelf.locator(`[data-plugin="${owner}"]`);
   await entry.waitFor({ timeout: 4000 });

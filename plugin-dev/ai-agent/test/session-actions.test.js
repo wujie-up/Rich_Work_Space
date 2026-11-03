@@ -28,13 +28,13 @@ test('restoring and archiving repeatedly replaces the original archive and retai
     adapter: () => ({ capabilities: { restore: true }, buildLaunch: () => ({ command: '/bin/cat', args: [] }),
       resolveContext: () => 'native-context' }), processControl: async s => s.terminal.kill() });
   const first = await sessions.create('test', { adapterId: 'test', cwd: '/tmp' });
-  sessions.get('test', first.id).output = 'original transcript\n';
+  pty.terminals[0].data('original transcript\n');
   await sessions.archive('test', first.id);
   for (let index = 0; index < 2; index++) {
     const restored = await sessions.restore('test', first.id);
     assert.equal(restored.contextId, 'native-context');
     assert.match(sessions.attach('test', restored.id).data, /original transcript/);
-    sessions.get('test', restored.id).output += `continued ${index}\n`;
+    pty.terminals.at(-1).data(`continued ${index}\n`);
     const archived = await sessions.archive('test', restored.id);
     assert.equal(archived.id, first.id);
     assert.equal(sessions.list('test').archives.length, 1);
@@ -45,7 +45,7 @@ test('restoring and archiving repeatedly replaces the original archive and retai
   assert.equal(loaded.list('test').archives.length, 1);
 });
 
-test('restore coalesces; fork needs idle context; unsupported restore never launches', async (t) => {
+test('restore coalesces; fork needs idle context; adapters without native restore retain their window', async (t) => {
   const storage = await temporaryStore(t);
   const pty = fakePty();
   const adapter = { capabilities: { restore: true, fork: true }, buildLaunch: () => ({ command: '/bin/cat', args: [] }),
@@ -67,5 +67,8 @@ test('restore coalesces; fork needs idle context; unsupported restore never laun
   assert.equal((await sessions.archive('test', one.id)).contextId, undefined, 'ambiguous resolution clears an inherited context');
   await sessions.stopAndArchive('test', 'test');
   adapter.capabilities.restore = false;
-  await assert.rejects(sessions.restore('test', a.id), { code: 'UNSUPPORTED_CAPABILITY' });
+  const restarted = await sessions.restore('test', a.id);
+  assert.equal(restarted.contextId, undefined);
+  assert.equal(restarted.restoredFrom, a.id);
+  await sessions.archive('test', restarted.id);
 });

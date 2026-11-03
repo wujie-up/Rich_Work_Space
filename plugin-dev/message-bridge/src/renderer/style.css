@@ -1,0 +1,33 @@
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--desk-control-text); background: var(--desk-surface); font: 13px/1.6 system-ui, sans-serif; }
+main { padding: 16px 20px; max-width: 1200px; margin: auto; }
+.toolbar, .actions, .status-row, .setting-row, .row { display: flex; align-items: center; gap: 8px; }
+.toolbar { flex-wrap: wrap; }
+.actions { margin-left: auto; justify-content: flex-end; flex-shrink: 0; }
+nav { display: flex; flex-wrap: wrap; gap: 12px; }
+nav button { padding: 6px 0; border: 0; background: transparent; color: var(--desk-muted); font: inherit; cursor: pointer; }
+nav button[aria-pressed=true] { color: var(--desk-control-text); text-decoration: underline; text-underline-offset: 7px; }
+.icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 7px; color: inherit; cursor: pointer; }
+.icon svg { width: 20px; height: 20px; }
+.status-row { justify-content: space-between; margin: 12px 0; }
+#error { color: #c96767; overflow-wrap: anywhere; }
+section > .row, .empty { padding: 16px 0; border-bottom: 1px solid var(--desk-control-border); }
+.row { flex-wrap: wrap; }
+.details { flex: 1; min-width: 150px; overflow-wrap: anywhere; }
+.details strong { display: block; font-weight: 500; }
+.state { color: var(--desk-muted); }
+.fields { display: grid; gap: 14px; }
+label { display: grid; gap: 5px; min-width: 0; }
+label input:not([type=checkbox]), label textarea, label select { width: 100%; }
+.columns { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.setting-row { justify-content: space-between; }
+.consent { display: flex; align-items: start; gap: 12px; }
+.consent input { margin-left: auto; }
+dialog { width: min(640px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow: auto; }
+.dialog-actions { position: sticky; bottom: 0; background: var(--desk-surface); }
+.qr { width: 180px; height: 180px; display: block; margin-top: 12px; }
+.help { position: relative; }
+.help [role=tooltip] { display: none; position: absolute; right: 0; top: 38px; width: min(340px, calc(100vw - 44px)); z-index: 2; }
+.help:is(:hover, :focus-within) [role=tooltip] { display: block; }
+[hidden] { display: none !important; }
+@media (max-width: 520px) { main { padding: 12px; } .columns { grid-template-columns: 1fr; } .toolbar { gap: 12px; } }

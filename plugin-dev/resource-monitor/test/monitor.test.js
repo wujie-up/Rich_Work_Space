@@ -25,11 +25,36 @@ test('one sampler shares a bounded history, persisted settings and current data 
     await scheduled.shift()();
   }
   assert.equal(monitor.snapshot().history.length, 120);
+  const compact = monitor.snapshot({ includeHistory: false });
+  assert.deepEqual(compact.history, []);
+  assert.deepEqual(compact.latest, monitor.snapshot().latest);
+  assert.equal(monitor.snapshot().history.length, 120);
   assert.equal(monitor.snapshot().latest.total.cpu, 50);
   assert.equal(monitor.snapshot().settings.defaultCollapsed, true);
   await monitor.updateSettings({ interval: 2 });
   assert.deepEqual(writes[0], { interval: 2, defaultCollapsed: true });
-  await assert.rejects(monitor.updateSettings({ interval: 1 }), /间隔/);
+  await assert.rejects(monitor.updateSettings({ interval: 0 }), /间隔/);
+  await monitor.stop();
+});
+
+test('custom sampling seconds persist, reload and replace the pending sampling interval', async () => {
+  const delays = [];
+  const canceled = [];
+  const { monitor, writes } = setup({ readSettings: async () => ({ interval: 3 }),
+    schedule: (fn, delay) => { delays.push(delay); return delays.length; }, cancel: timer => canceled.push(timer) });
+  await monitor.start();
+  assert.equal(monitor.settings.interval, 3);
+  await monitor.updateSettings({ interval: 7 });
+  assert.deepEqual(writes[0], { interval: 7, defaultCollapsed: false });
+  assert.deepEqual(canceled, [1]);
+  assert.deepEqual(delays, [0, 7000]);
+  for (const interval of [0, -1, 1.5, NaN, Infinity, 2147484, '3']) {
+    await assert.rejects(monitor.updateSettings({ interval }), /间隔/);
+  }
+  const restored = setup({ readSettings: async () => writes[0] }).monitor;
+  await restored.start();
+  assert.equal(restored.settings.interval, 7);
+  await restored.stop();
   await monitor.stop();
 });
 

@@ -6,12 +6,12 @@ import { listPackage } from '@electron/asar';
 import { launch, configure, create, output, owner, alive, openConfiguration } from './helpers.js';
 
 test('package: independent app resources, Finder PATH, native PTY, archive and cleanup', { timeout: 120000 }, async (t) => {
-  const bundle = resolve('desk/dist/releases.noindex/mac-arm64/DeckPg.app');
-  const executablePath = `${bundle}/Contents/MacOS/DeckPg`;
+  const bundle = resolve('desk/dist/releases.noindex/mac-arm64/DeskPG.app');
+  const executablePath = `${bundle}/Contents/MacOS/DeskPG`;
   await access(executablePath);
   const {version} = JSON.parse(await readFile(resolve('package.json'), 'utf8'));
   for (const ext of ['dmg', 'zip']) {
-    assert.ok((await stat(resolve(`desk/dist/releases.noindex/DeckPg-${version}-arm64.${ext}`))).size > 1000000);
+    assert.ok((await stat(resolve(`desk/dist/releases.noindex/DeskPG-${version}-arm64.${ext}`))).size > 1000000);
   }
   const entries = listPackage(`${bundle}/Contents/Resources/app.asar`);
   assert.ok(entries.includes('/desk/dist/plugins/ai-agent/plugin.json'));
@@ -42,7 +42,7 @@ test('package: independent app resources, Finder PATH, native PTY, archive and c
 });
 
 test('package: force close reaps owned PTY processes, keeps configuration and follows native system appearance', { timeout: 60000 }, async (t) => {
-  const executablePath = resolve('desk/dist/releases.noindex/mac-arm64/DeckPg.app/Contents/MacOS/DeckPg');
+  const executablePath = resolve('desk/dist/releases.noindex/mac-arm64/DeskPG.app/Contents/MacOS/DeskPG');
   const { app, page, data } = await launch(t, { executablePath });
   // Playwright defaults to emulated light appearance; let Chromium observe nativeTheme in this regression.
   await page.emulateMedia({ colorScheme: null });

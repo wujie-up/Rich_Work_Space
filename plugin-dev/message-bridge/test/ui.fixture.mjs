@@ -1,0 +1,160 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer } from 'node:https';
+import { readFile, mkdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright';
+import selfsigned from 'selfsigned';
+
+const directory = fileURLToPath(new URL('../dist/renderer/', import.meta.url));
+const output = process.env.BRIDGE_UI_OUTPUT || '/tmp/message-bridge-ui';
+const snapshot = { authorized: true, channels: [{ id: 'feishu', name: '飞书测试', type: 'feishu', enabled: true, status: { state: 'connected' } }],
+  routes: [], exchanges: [], deliveries: [], sources: [{ channelId: 'feishu', chatType: 'group', chatId: 'group-fixture', senderId: 'alice-fixture' }] };
+
+test('isolated HTTPS view supports themes, narrow/tiled/settings layouts, source rules and exact existing targets', async t => {
+  const certificate = await selfsigned.generate([{ name: 'commonName', value: 'localhost' }], { keySize: 2048, days: 1 });
+  const options = { key: certificate.private, cert: certificate.cert };
+  const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const plugin = createServer(options, async (request, response) => {
+    const path = new URL(request.url, 'https://localhost').pathname;
+    const name = path.endsWith('.js') ? 'app.js' : path.endsWith('.css') ? 'app.css' : 'index.html';
+    response.setHeader('Content-Type', { 'app.js': 'text/javascript', 'app.css': 'text/css', 'index.html': 'text/html' }[name]);
+    response.end(await readFile(directory + name));
+  });
+  await listen(plugin);
+  const pluginOrigin = `https://localhost:${plugin.address().port}`;
+  const parent = createServer(options, (_request, response) => {
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.end(`<!doctype html><style>body{margin:0}iframe{border:0;width:100vw;height:100vh;display:block}</style>
+      <iframe sandbox="allow-scripts allow-same-origin" src="${pluginOrigin}/?deskPlugin=message-bridge"></iframe><script>
+      const snapshot=window.snapshot=${JSON.stringify(snapshot)};window.calls=[];
+      addEventListener('message',event=>{
+        const frame=document.querySelector('iframe');if(event.source!==frame.contentWindow||event.origin!==${JSON.stringify(pluginOrigin)})return;
+        const message=event.data;if(message.type!=='desk:invoke')return;
+        const [method,args]=message.args;window.calls.push({method,args});let value={};
+        if(method==='bridge.snapshot')value=snapshot;
+        if(method==='bridge.catalog')value={targets:[{targetRef:{kind:'conversation',id:'existing-fixture'},name:'已有工作会话',engineId:'codex',available:true},
+          {targetRef:{kind:'terminal',id:'terminal-fixture'},name:'终端',engineId:'claude',available:false}]};
+        event.source.postMessage({type:'desk:result',id:message.id,value},event.origin);
+      });</script>`);
+  });
+  await listen(parent);
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await Promise.all([new Promise(resolve => parent.close(resolve)), new Promise(resolve => plugin.close(resolve))]); });
+  await mkdir(output, { recursive: true });
+  const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1100, height: 800 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto(`https://localhost:${parent.address().port}`);
+  const frame = page.frameLocator('iframe');
+  await frame.getByText('Agent 桥接已授权', { exact: true }).waitFor();
+  assert.equal(await frame.locator('#authorize').isDisabled(), true);
+  await frame.getByRole('button', { name: '最近来源', exact: true }).click();
+  await frame.getByRole('button', { name: '为此来源创建规则', exact: true }).click();
+  await frame.locator('#route-dialog').waitFor({ state: 'visible' });
+  assert.equal(await frame.locator('#route-form [name=chatIds],#route-form [name=senderIds],#route-form [name=name],#route-form [name=priority],#route-form [name=scope]').count(), 0);
+  assert.equal(await frame.locator('[name=triggerValue]').inputValue(), '@小微');
+  assert.equal(await frame.locator('#route-form [name=channelId]').inputValue(), 'feishu');
+  await frame.getByRole('button', { name: '保存规则', exact: true }).click();
+  await page.waitForFunction(() => window.calls.some(item => item.method === 'bridge.saveRoute'), null, { timeout: 3000 });
+  await frame.locator('#route-dialog').waitFor({ state: 'hidden' });
+  let calls = await page.evaluate(() => window.calls.filter(item => item.method === 'bridge.saveRoute'));
+  assert.equal(calls[0].args[0].target.mode, 'dedicated');
+  assert.equal(calls[0].args[0].executionPolicy.mode, 'readOnly');
+  assert.equal(calls[0].args[0].sourceMode, 'channel');
+  assert.equal(calls[0].args[0].trigger.value, '@小微');
+  assert.equal(calls[0].args[0].chatIds, undefined);
+  await frame.getByRole('button', { name: '为此来源创建规则', exact: true }).click();
+  await frame.locator('#route-dialog').waitFor({ state: 'visible' });
+  await frame.locator('[name=mode]').selectOption('existing');
+  assert.equal(await frame.locator('[name=targetId] option[value=terminal-fixture]').evaluate(node => node.disabled), true);
+  await frame.locator('[name=targetId]').selectOption('existing-fixture');
+  await frame.locator('[name=accepted]').check();
+  await frame.getByRole('button', { name: '保存规则', exact: true }).click();
+  await page.waitForFunction(() => window.calls.filter(item => item.method === 'bridge.saveRoute').length === 2, null, { timeout: 3000 });
+  await frame.locator('#route-dialog').waitFor({ state: 'hidden' });
+  calls = await page.evaluate(() => window.calls.filter(item => item.method === 'bridge.saveRoute'));
+  assert.deepEqual(calls[1].args[0].target.targetRef, { kind: 'conversation', id: 'existing-fixture' });
+  assert.equal(calls[1].args[0].executionPolicy.accepted, true);
+  await frame.getByRole('button', { name: '渠道', exact: true }).click();
+  await frame.getByRole('button', { name: '新增渠道', exact: true }).click();
+  await frame.locator('#channel-form [name=type]').selectOption('wechat');
+  assert.equal(await frame.locator('#channel-form [name=puppet]').count(), 1);
+  assert.equal(await frame.locator('#channel-form [name=puppet]').inputValue(), 'native');
+  assert.equal(await frame.locator('#channel-form [name=token]').isVisible(), true);
+  assert.equal(await frame.locator('#channel-form [name=endpoint]').getAttribute('placeholder'), '127.0.0.1:18401');
+  assert.equal(await frame.locator('.wechat-native-field').isVisible(), true);
+  await frame.locator('#channel-form [name=puppet]').selectOption('service');
+  assert.equal(await frame.locator('#channel-form [name=token]').isVisible(), true);
+  await frame.locator('#channel-form [name=puppet]').selectOption('wechat4u');
+  assert.equal(await frame.locator('#channel-form [name=token]').isVisible(), false);
+  await frame.locator('#channel-form [name=name]').fill('微信网页测试');
+  await frame.getByRole('button', { name: '保存渠道', exact: true }).click();
+  await frame.locator('#channel-dialog').waitFor({ state: 'hidden' });
+  const channels = await page.evaluate(() => window.calls.filter(item => item.method === 'bridge.saveChannel'));
+  assert.equal(channels[0].args[0].puppet, 'wechat4u');
+  assert.equal(channels[0].args[0].type, 'wechat');
+  await frame.getByRole('button', { name: '新增渠道', exact: true }).click();
+  await frame.locator('#channel-form [name=type]').selectOption('wechat');
+  await frame.locator('#channel-form [name=endpoint]').fill('127.0.0.1:19999');
+  await page.keyboard.press('Escape');
+  await frame.getByRole('button', { name: '新增渠道', exact: true }).click();
+  await frame.locator('#channel-form [name=type]').selectOption('wechat');
+  assert.equal(await frame.locator('#channel-form [name=endpoint]').inputValue(), '');
+  await page.keyboard.press('Escape');
+  for (const [theme, width, height, name] of [['dark', 1100, 800, 'normal-dark'], ['light', 1100, 800, 'normal-light'],
+    ['dark', 530, 720, 'tiled-dark'], ['light', 360, 640, 'settings-narrow-light']]) {
+    await page.setViewportSize({ width, height });
+    await frame.locator('html').evaluate((element, theme) => { element.dataset.theme = theme; }, theme);
+    await frame.getByRole('button', { name: '新增渠道', exact: true }).click();
+    await frame.locator('#channel-form [name=type]').selectOption('wechat');
+    await frame.locator('#channel-form [name=puppet]').selectOption('native');
+    // Provider fields resize the popup; allow the shared ResizeObserver positioner to complete its next frame.
+    await frame.locator('#channel-dialog').evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const bounds = await frame.locator('#channel-dialog').boundingBox();
+    assert.ok(Math.abs(bounds.x + bounds.width / 2 - width / 2) <= 2, `${name} horizontally centered`);
+    assert.ok(Math.abs(bounds.y + bounds.height / 2 - height / 2) <= 2, `${name} vertically centered`);
+    assert.ok(bounds.width <= width && bounds.height <= height, `${name} in viewport`);
+    await frame.locator('#channel-form [name=name]').focus();
+    assert.equal(await frame.locator('#channel-form [name=name]').evaluate(node => node.matches(':focus-visible')), true);
+    await frame.locator('#channel-dialog').evaluate(node => node.getAnimations().forEach(animation => animation.finish()));
+    await page.screenshot({ path: `${output}/${name}.png` });
+    await page.keyboard.press('Escape');
+    await frame.locator('#channel-dialog').waitFor({ state: 'hidden' });
+    assert.equal(await frame.locator('#add').evaluate(node => document.activeElement === node), true);
+    assert.equal(await frame.locator('body').evaluate(node => node.scrollWidth <= innerWidth), true);
+    await frame.getByRole('button', { name: '规则', exact: true }).click();
+    await frame.getByRole('button', { name: '新增规则', exact: true }).click();
+    await frame.locator('#route-dialog').evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const ruleBounds = await frame.locator('#route-dialog').boundingBox();
+    assert.ok(Math.abs(ruleBounds.x + ruleBounds.width / 2 - width / 2) <= 2, `${name} rule horizontally centered`);
+    assert.ok(Math.abs(ruleBounds.y + ruleBounds.height / 2 - height / 2) <= 2, `${name} rule vertically centered`);
+    assert.ok(ruleBounds.width <= width && ruleBounds.height <= height, `${name} rule in viewport`);
+    await frame.locator('[name=triggerValue]').focus();
+    assert.equal(await frame.locator('[name=triggerValue]').evaluate(node => node.matches(':focus-visible')), true);
+    await frame.locator('#route-dialog').evaluate(node => node.getAnimations().forEach(animation => animation.finish()));
+    await page.screenshot({ path: `${output}/rule-${name}.png` });
+    await frame.locator('[name=triggerType]').selectOption('mention');
+    assert.equal(await frame.locator('[name=triggerValue]').isDisabled(), true);
+    await page.keyboard.press('Escape');
+    await frame.locator('#route-dialog').waitFor({ state: 'hidden' });
+    await frame.getByRole('button', { name: '渠道', exact: true }).click();
+  }
+  await page.evaluate(() => window.snapshot.channels.push({ id: 'wechat', name: '微信网页测试', type: 'wechat', enabled: true,
+    status: { state: 'connected', account: '测试账号' } }));
+  await frame.getByRole('button', { name: '刷新', exact: true }).click();
+  await frame.getByText('微信好友与群 · 已连接 · 测试账号', { exact: true }).waitFor();
+  await page.evaluate(() => { window.snapshot.channels[1].status = { state: 'error', error: '微信网页登录被拒绝（1203）：当前账号无法登录网页版微信' }; });
+  await frame.getByRole('button', { name: '刷新', exact: true }).click();
+  await frame.getByText(/微信网页登录被拒绝（1203）/).waitFor();
+  await frame.locator('#channels .row').last().getByRole('button', { name: '编辑渠道', exact: true }).click();
+  assert.equal(await frame.locator('#channel-form [name=puppet]').inputValue(), 'wechat4u');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { window.snapshot.channels[1].puppet = 'native'; });
+  await frame.getByRole('button', { name: '刷新', exact: true }).click();
+  await frame.getByRole('button', { name: '连接本机微信网关', exact: true }).waitFor();
+  assert.equal(await frame.locator('button.icon:not([title]),button.icon:not([aria-label])').count(), 0);
+  assert.equal(await page.evaluate(() => window.calls.filter(item => item.method === 'bridge.saveChannel').length), 1);
+  assert.deepEqual(errors, []);
+});

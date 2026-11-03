@@ -20,6 +20,7 @@ test('app-server frames partial JSON, correlates requests, streams events, and a
   assert.equal(owned, 8001);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(sent[0].method, 'initialize');
+  assert.deepEqual(sent[0].params.capabilities, { experimentalApi: false });
   child.stdout.write('{"id":1,"res');
   child.stdout.write('ult":{"userAgent":"native"}}\n');
   await ready;
@@ -31,6 +32,9 @@ test('app-server frames partial JSON, correlates requests, streams events, and a
   assert.equal(events.at(-1).id, 99);
   server.respond(99, { decision: 'decline' });
   assert.deepEqual(sent.at(-1), { id: 99, result: { decision: 'decline' } });
+  server.receive({ id: 0, method: 'mcpServer/elicitation/request', params: { mode: 'url' } });
+  server.receive({ method: 'serverRequest/resolved', params: { requestId: 0, threadId: 't' } });
+  assert.throws(() => server.respond(0, { action: 'accept' }), /失效/);
   const pending = server.request('thread/read', {});
   child.emit('exit', 1);
   await assert.rejects(pending, /退出/);

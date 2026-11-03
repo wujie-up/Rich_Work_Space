@@ -18,3 +18,30 @@ export function sessionName(value) {
 }
 
 export const CHANNELS = ['plugins.changed', 'sessions.changed', 'sessions.output', 'host.error'];
+
+// Codex now requests MCP tool approval through elicitation rather than requestApproval.
+export const isApprovalRequest = event => event.method.endsWith('/requestApproval')
+  || event.method === 'mcpServer/elicitation/request' && event.params?._meta?.codex_approval_kind === 'mcp_tool_call';
+
+export const isElicitationRequest = event => event.method === 'mcpServer/elicitation/request' && !isApprovalRequest(event);
+
+// Replay native resolution in order so numeric IDs, request ID reuse and interrupted turns share one lifecycle.
+export function pendingRequests(events) {
+  const pending = new Map();
+  for (const event of events) {
+    if (event.id !== undefined && (isApprovalRequest(event) || isElicitationRequest(event)
+      || event.method === 'item/tool/requestUserInput')) {
+      pending.set(event.id, event);
+    } else if (['approval/answered', 'serverRequest/resolved'].includes(event.method)) {
+      pending.delete(event.params.requestId);
+    } else if (event.params?.item?.type === 'approvalCancelled') {
+      pending.delete(event.params.item.requestId);
+    } else if (event.method === 'turn/completed') {
+      for (const [id, request] of pending) {
+        if (request.params?.turnId && request.params.turnId === event.params.turn.id
+          && request.params.threadId === event.params.threadId) { pending.delete(id); }
+      }
+    }
+  }
+  return [...pending.values()];
+}

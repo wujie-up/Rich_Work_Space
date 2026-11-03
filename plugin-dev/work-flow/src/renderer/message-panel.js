@@ -1,3 +1,4 @@
+import { confirmConfigurationDelete } from './configuration-delete.js';
 import { escape } from './api.js';
 
 const CHANNELS = { wechat: '微信', feishu: '飞书' };
@@ -13,6 +14,7 @@ export function createMessagePanel(container, { invoke, subscribe, onConnections
   let statuses = [];
   let queue = [];
   let workflowId;
+  let channel;
   let generation = 0;
   let disposed = false;
   container.innerHTML = `<div class="message-actions">
@@ -47,7 +49,7 @@ export function createMessagePanel(container, { invoke, subscribe, onConnections
     container.querySelector('#message-errors').innerHTML = statuses.filter(item => item.workflowId).map(item =>
       `<p class="error-text">${escape(item.name)}：${escape(item.error)}</p>`).join('');
     const list = container.querySelector('#message-list');
-    list.innerHTML = connections.map(connection => {
+    list.innerHTML = connections.filter(connection => !channel || connection.channel === channel).map(connection => {
       const status = statuses.find(item => item.connectionId === connection.id && !item.workflowId);
       const qr = /^data:image\/png;base64,[a-zA-Z0-9+/=]+$/.test(status?.qrDataUrl || '') ? status.qrDataUrl : '';
       return `<section class="message-connection"><strong>${escape(connection.name)}</strong>
@@ -76,7 +78,8 @@ export function createMessagePanel(container, { invoke, subscribe, onConnections
     for (const action of ['test', 'reconnect', 'disconnect', 'remove']) {
       list.querySelectorAll(`[data-message-${action}]`).forEach(button => {
         button.onclick = () => act(async () => {
-          if (action === 'remove' && !confirm('删除此消息连接？被工作流引用的连接不能删除。')) {
+          if (action === 'remove' && !await confirmConfigurationDelete('删除消息连接',
+            `确认删除消息连接“${connections.find(item => item.id === button.dataset.messageRemove).name}”？被工作流引用的连接不能删除。`, button)) {
             return;
           }
           await invoke(`messages.connections.${action}`, button.getAttribute(`data-message-${action}`));
@@ -97,6 +100,7 @@ export function createMessagePanel(container, { invoke, subscribe, onConnections
     : `${field('appId', 'App ID', 'text', connection.appId)}${field('appSecret', 'App Secret', 'password')}`}
       <div class="message-actions">${icon('保存连接', 'id="message-save"', 'M5 3h12l4 4v14H3V3zM7 3v6h10V3M7 21v-8h10v8')}
       ${icon('取消编辑', 'id="message-cancel"', 'M6 6l12 12M18 6L6 18')}</div></form>`;
+    form.querySelector('#message-channel').disabled = Boolean(connection.id || channel);
     form.querySelector('#message-channel').onchange = event => edit({ channel: event.target.value });
     form.querySelector('#message-cancel').onclick = () => { form.innerHTML = ''; };
     const save = event => {
@@ -130,7 +134,7 @@ export function createMessagePanel(container, { invoke, subscribe, onConnections
       });
     });
   }
-  container.querySelector('#message-new').onclick = () => edit();
+  container.querySelector('#message-new').onclick = () => edit({ channel: channel || 'wechat' });
   container.querySelector('#message-refresh').onclick = () => act(load);
   container.querySelector('#message-clear').onclick = () => act(async () => {
     if (workflowId && confirm('清空当前工作流的排队消息和异常历史？活动运行保持不变。')) {
@@ -139,7 +143,12 @@ export function createMessagePanel(container, { invoke, subscribe, onConnections
     }
   });
   const unsubscribe = subscribe('messages.changed')(() => act(load));
-  return { load, render(workflow) {
+  return { load, render(workflow, selectedChannel) {
+    if (channel !== selectedChannel) {
+      channel = selectedChannel;
+      container.querySelector('#message-form').innerHTML = '';
+      renderList();
+    }
     if (workflowId !== workflow?.id) {
       workflowId = workflow?.id;
       act(load);

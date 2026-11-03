@@ -1,0 +1,18 @@
+{
+  "name": "work-desk-message-bridge",
+  "private": true,
+  "type": "module",
+  "version": "0.1.5",
+  "scripts": {
+    "build": "node build/build.mjs",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "1.76.0",
+    "qrcode": "1.5.4",
+    "wechaty": "1.20.2",
+    "wechaty-puppet": "1.20.2",
+    "wechaty-puppet-service": "1.18.2",
+    "wechaty-puppet-wechat4u": "1.14.14"
+  }
+}

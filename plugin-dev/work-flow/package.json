@@ -1,6 +1,6 @@
 {
   "type": "module",
-  "version": "0.5.2",
+  "version": "0.5.70",
   "dependencies": {
     "@larksuiteoapi/node-sdk": "1.76.0",
     "qrcode": "1.5.4",

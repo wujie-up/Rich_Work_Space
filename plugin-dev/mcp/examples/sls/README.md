@@ -6,7 +6,7 @@
 
 在 MCP 插件添加“部署 Python / JavaScript”服务，导入此目录，选择 `server.mjs` 为入口，运行环境填写 Node.js 的绝对路径。目录中的 `mcp-service.json` 声明配置表单，不包含密钥。
 
-填写 SLS 区域地址、AccessKey ID、AccessKey Secret，使用 STS 时再填写 Token。Project、Logstore 为可选默认值，调用方可分别传入 `project`、`logstore` 覆盖；未配置默认值时必须在调用时传入。一个实例可查询所配置区域内、当前凭据有权限访问的所有 Project / Logstore，不会绕过阿里云权限，也不跨区域自动发现。密钥保存在本机 MCP 插件配置中，不写入代码或服务压缩包。
+填写默认 SLS 区域地址、AccessKey ID、AccessKey Secret，使用 STS 时再填写 Token。Project、Logstore 为可选默认值，调用方可分别传入 `project`、`logstore` 覆盖；未配置默认值时必须在调用时传入。1.2.0 起可传入 `region`，仅覆盖本次查询的地域；未传时继续使用原 `SLS_ENDPOINT`。地域只接受 `cn-hongkong`、`us-west-1` 等标识，由服务生成阿里云公网 HTTPS 地址，不接受自定义域名或 URL。一个实例可查询当前凭据有权限访问的跨地域 Project / Logstore，不会绕过阿里云权限，也不自动发现地域。密钥保存在本机 MCP 插件配置中，不写入代码或服务压缩包。
 
 保存并启用后可发现 `sls_query`。已启动的服务自动提供给 AI Agent；新建、恢复或分叉 Codex 会话时加载。运行中的会话不会热更新。
 
@@ -25,6 +25,16 @@
 ```
 
 并发调用各自使用独立的目标地址，不会改变其他调用或服务默认值。
+
+查询 SaaS 中台（香港地域，与老系统共用现有查询凭据）：
+
+```json
+{"region":"cn-hongkong","project":"ai-saas","logstore":"admin","term":"错误关键字或TraceId","minutes":120,"lines":20}
+```
+
+`region` 必须与目标项目实际所在地域一致。返回的 `endpoint` 为本次实际地址，重试和固定时间窗分页必须继续携带相同的 `region`、`project`、`logstore`。无效地域按现有工具错误格式返回，不发送网络请求，不修改默认值；网络或权限失败不会自动切换其他地域或伪造查询成功。
+
+升级已部署服务时，在 MCP 服务中重新导入本目录并保留原配置，然后启用该服务。现有部署是独立快照，修改示例源码或更新 MCP 插件包不会自动替换已部署代码；新建或恢复 AI 会话后才能加载更新的工具参数。
 
 统计查询：
 

@@ -1,0 +1,12 @@
+{
+  "name": "飞书文档 · feishu-doc",
+  "language": "javascript",
+  "entry": "server.cjs",
+  "fields": [
+    { "name": "APP_ID", "label": "飞书 App ID", "required": true },
+    { "name": "APP_SECRET", "label": "飞书 App Secret", "secret": true, "required": true },
+    { "name": "FEISHU_DOC_ENGINE_DIR", "label": "官方 lark-mcp 0.5.1 运行库目录", "required": true },
+    { "name": "FEISHU_DOC_DATA_DIR", "label": "feishu-doc 独立数据目录", "required": true },
+    { "name": "USER_ACCESS_TOKEN", "label": "用户访问令牌（可选，填写时替代 OAuth）", "secret": true }
+  ]
+}

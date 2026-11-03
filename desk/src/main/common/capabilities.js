@@ -1,3 +1,5 @@
+import { PluginMessages } from './plugin-messages.js';
+import { CapabilityAuthorizations } from './capability-authorizations.js';
 import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { fail } from '../../shared/contracts.js';
@@ -8,8 +10,10 @@ const contract = 'desk.capabilities.v1';
 
 // Registrations live in runtime.services; this class only owns generic invocation state and policy.
 export class Capabilities {
-  constructor({ storage, loaded, usable, emit = () => {} }) {
-    Object.assign(this, { storage, loaded, usable, emit });
+  constructor({ storage, loaded, usable, acquireResource, emit = () => {} }) {
+    Object.assign(this, { storage, loaded, usable, acquireResource, emit });
+    this.messages = new PluginMessages(emit);
+    this.authorizations = new CapabilityAuthorizations({ storage, messages: this.messages, resolve: handle => this.resolve(handle) });
     this.revision = 0;
     this.invocations = new Map();
     this.writes = new Set();
@@ -17,19 +21,43 @@ export class Capabilities {
   }
 
   async load() {
-    const entries = await readdir(await this.storage.path('capability-invocations')).catch(error => {
+    const started = performance.now();
+    const migrated = await this.storage.readJson('capability-recovery.json');
+    // Older hosts did not track pending calls separately; retain their history and migrate only once.
+    const legacyRecovered = migrated ? 0 : await this.recover('capability-invocations');
+    const recovered = legacyRecovered + await this.recover('capability-pending');
+    if (!migrated) {
+      await this.storage.writeJson('capability-recovery.json', { version: 1 });
+    }
+    console.info('[capability:recovery]', { migrated: !migrated, recovered, elapsedMs: Math.round(performance.now() - started) });
+  }
+
+  async recover(directory) {
+    const entries = await readdir(await this.storage.path(directory)).catch(error => {
       if (error.code !== 'ENOENT') {
         throw error;
       }
       return [];
     });
+    let recovered = 0;
     for (const name of entries.filter(name => /^[\w-]+\.json$/.test(name))) {
-      const key = `capability-invocations/${name}`;
-      const value = await this.storage.readJson(key);
-      if (!terminal.has(value.state)) {
-        await this.storage.writeJson(key, { ...value, state: 'interrupted', finishedAt: Date.now(), error: { code: 'HOST_RESTARTED' } });
+      try {
+        const key = `capability-invocations/${name}`;
+        // A crash after the final history write can leave a stale pending record; the history wins.
+        const value = await this.storage.readJson(key) ?? await this.storage.readJson(`${directory}/${name}`);
+        if (value && !terminal.has(value.state)) {
+          await this.storage.writeJson(key, { ...value, state: 'interrupted', finishedAt: Date.now(), error: { code: 'HOST_RESTARTED' } });
+          recovered++;
+        }
+        if (directory === 'capability-pending') {
+          await this.storage.io.rm(await this.storage.path(`${directory}/${name}`), { force: true });
+        }
+      } catch (error) {
+        console.error('[capability:recovery-failed]', { invocationId: name.slice(0, -5), directory, error });
+        throw error;
       }
     }
+    return recovered;
   }
 
   async register(runtime, value, replace = false) {
@@ -109,17 +137,20 @@ export class Capabilities {
     if (!Number.isFinite(requestedTimeout) || requestedTimeout <= 0) {
       throw fail('INPUT_INVALID', '调用超时参数无效');
     }
-    const deadline = Math.min(Date.now() + requestedTimeout, Date.now() + descriptor.execution.timeoutMs, parent?.deadline || Infinity);
-    if (deadline <= Date.now() || parent?.signal?.aborted) {
+    const deadline = parent?.deadline || null;
+    if ((deadline !== null && deadline <= Date.now()) || parent?.signal?.aborted) {
       throw fail('CALL_TIMEOUT', '父调用已结束');
     }
     const invocationId = randomUUID();
     const record = { invocationId, traceId: parent?.traceId || randomUUID(), state: 'queued', deadline, sequence: 0,
       caller: { pluginId: caller.id, instanceId: caller.instanceId }, provider: { ...handle }, createdAt: Date.now() };
     const controller = new AbortController();
-    const task = { record, caller, runtime, descriptor, input: value, controller, chain: [...chain, runtime.id], children: new Set() };
-    const approval = descriptor.confirmation === 'always' || !descriptor.effects.length
-      || descriptor.effects.some(effect => !/^(filesystem|network|workspace|document)\.read$/.test(effect));
+    const task = { record, caller, runtime, descriptor, input: value, controller, chain: [...chain, runtime.id], children: new Set(),
+      timeoutMs: Math.min(requestedTimeout, descriptor.execution.timeoutMs), parentDeadline: deadline };
+    const authorized = this.authorizations.allows(caller, options.authorizationId, handle);
+    task.authorizationId = authorized ? options.authorizationId : undefined;
+    const approval = !authorized && (descriptor.confirmation === 'always' || !descriptor.effects.length
+      || descriptor.effects.some(effect => !/^(filesystem|network|workspace|document)\.read$/.test(effect)));
     record.approvalRequired = approval;
     if ([...this.invocations.values()].filter(item => !terminal.has(item.record.state)).length >= 128) {
       throw fail('RESOURCE_BUSY', '并发能力调用已达上限');
@@ -129,13 +160,8 @@ export class Capabilities {
       if (terminal.has(item.record.state)) { this.invocations.delete(id); }
     }
     this.invocations.set(invocationId, task);
-    const timer = setTimeout(() => {
-      this.finish(task, 'failed', { error: { code: 'CALL_TIMEOUT', message: '能力调用超时，外部操作可能仍已执行' } });
-      controller.abort();
-      runtime.cancelCapability?.(invocationId);
-    }, Math.max(1, deadline - Date.now()));
-    timer.unref?.();
-    task.timer = timer;
+    // Human approval has no execution deadline, but cannot outlive an enclosing call.
+    this.scheduleTimeout(task, deadline);
     task.parentAbort = () => {
       this.finish(task, 'interrupted', { error: { code: 'PARENT_ENDED', message: '父调用已结束，外部操作可能仍已执行' } });
       controller.abort();
@@ -151,6 +177,20 @@ export class Capabilities {
       queueMicrotask(() => this.run(task));
     }
     return { invocationId, traceId: record.traceId, state: record.state, deadline };
+  }
+
+  scheduleTimeout(task, deadline) {
+    clearTimeout(task.timer);
+    task.record.deadline = deadline;
+    if (deadline === null) {
+      return;
+    }
+    task.timer = setTimeout(() => {
+      this.finish(task, 'failed', { error: { code: 'CALL_TIMEOUT', message: '能力调用超时，外部操作可能仍已执行' } });
+      task.controller.abort();
+      task.runtime.cancelCapability?.(task.record.invocationId);
+    }, Math.max(1, deadline - Date.now()));
+    task.timer.unref?.();
   }
 
   async approve(id, allowed) {
@@ -176,20 +216,30 @@ export class Capabilities {
       return;
     }
     const key = task.descriptor.execution.resource;
-    if (key && this.locks.has(key)) {
+    if (key && !this.acquireResource && this.locks.has(key)) {
       this.finish(task, 'failed', { error: { code: 'RESOURCE_BUSY', message: '能力资源正在使用' } });
       return;
     }
-    if (key) {
+    if (key && !this.acquireResource) {
       this.locks.set(key, task.record.invocationId);
     }
+    let release;
     try {
       this.resolve(task.record.provider);
+      if (key && this.acquireResource) {
+        release = this.acquireResource(task.runtime, key);
+      }
+      if (task.parentDeadline !== null && task.parentDeadline <= Date.now()) {
+        throw fail('CALL_TIMEOUT', '父调用已结束');
+      }
+      // Start the execution budget only after approval; preserve the parent's absolute limit.
+      this.scheduleTimeout(task, Math.min(Date.now() + task.timeoutMs, task.parentDeadline ?? Infinity));
       task.record.state = 'running';
       this.publish(task);
       const result = await task.runtime.executeCapability(task.input, { invocationId: task.record.invocationId,
         traceId: task.record.traceId, deadline: task.record.deadline, chain: task.chain, signal: task.controller.signal,
-        capabilityId: task.descriptor.id, version: task.descriptor.version });
+        capabilityId: task.descriptor.id, version: task.descriptor.version,
+        caller: task.record.caller, authorizationId: task.authorizationId });
       const value = jsonValue(result, 'OUTPUT_INVALID');
       if (!matchesSchema(value, task.descriptor.outputSchema)) {
         throw fail('OUTPUT_INVALID', '能力返回值不符合 Schema');
@@ -200,6 +250,10 @@ export class Capabilities {
       this.finish(task, task.record.state === 'cancelling' && ['CANCELLED', 'ABORT_ERR'].includes(error.code) ? 'cancelled' : 'failed',
         { error: { code: error.code || 'CAPABILITY_FAILED', message: error.message } });
     } finally {
+      // A closed owner's locks belong to process cleanup; failed cleanup must retain them.
+      if (release && !task.runtime.closed) {
+        release();
+      }
       if (key && this.locks.get(key) === task.record.invocationId) {
         this.locks.delete(key);
       }
@@ -257,14 +311,27 @@ export class Capabilities {
     const { invocationId, traceId, state, deadline, sequence, caller, provider, createdAt, finishedAt } = record;
     const snapshot = { invocationId, traceId, state, deadline, sequence, caller, provider, createdAt, finishedAt,
       error: record.error ? { code: record.error.code } : undefined };
-    const write = (task.write || Promise.resolve()).catch(() => {}).then(() =>
-      this.storage.writeJson(`capability-invocations/${invocationId}.json`, snapshot));
+    const write = (task.write || Promise.resolve()).catch(() => {}).then(() => this.persist(snapshot));
     task.write = write;
     this.writes.add(write);
-    write.catch(error => console.error('[capability:persist]', { invocationId, message: error.message })).finally(() => this.writes.delete(write));
+    write.catch(error => console.error('[capability:persist]', { invocationId, error })).finally(() => this.writes.delete(write));
+  }
+
+  async persist(snapshot) {
+    const pendingKey = `capability-pending/${snapshot.invocationId}.json`;
+    // Register recovery before archiving, and remove it only after the terminal history is safely written.
+    if (!terminal.has(snapshot.state)) {
+      await this.storage.writeJson(pendingKey, snapshot);
+    }
+    await this.storage.writeJson(`capability-invocations/${snapshot.invocationId}.json`, snapshot);
+    if (terminal.has(snapshot.state)) {
+      await this.storage.io.rm(await this.storage.path(pendingKey), { force: true });
+    }
   }
 
   revoke(runtime) {
+    this.messages.revoke(runtime);
+    this.authorizations.revokeRuntime(runtime);
     runtime.services = (runtime.services || []).filter(entry => entry.contract !== contract);
     for (const task of this.invocations.values()) {
       if (!terminal.has(task.record.state) && (task.runtime === runtime || task.caller === runtime)) {

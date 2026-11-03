@@ -8,7 +8,8 @@ export async function activate(context) {
     context.methods.register(`capture.${method}`, (...args) => client[method](...args), { exclusive: method === 'configure' });
   }
   heartbeat = setInterval(() => client.renew().catch(error => {
-    context.emit('capture.event', { type: 'capture.error', code: 'AGENT_UNAVAILABLE', message: error.message });
+    console.error('[agent-capture:renew]', { target: client.target, code: error.code, message: error.message });
+    context.emit('capture.event', { type: 'capture.unavailable', code: 'AGENT_UNAVAILABLE', message: error.message });
   }), 5000);
   heartbeat.unref();
   context.views.register({ id: 'capture', title: 'Agent 抓包', entry: 'dist/renderer/index.html' });

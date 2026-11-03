@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { Conversations } from '../src/main/common/conversations.js';
+import { CaptureManager } from '../src/main/common/capture/manager.js';
 import { temporaryStore } from '../../../desk/test/helpers.js';
 
 test('window ownership persists, groups multiple conversations and never steals another window history', async t => {
@@ -21,7 +22,30 @@ test('window ownership persists, groups multiple conversations and never steals 
   const restarted = new Conversations(options);
   await restarted.load();
   assert.equal(restarted.windows.size, 2);
-  assert.equal(restarted.read(legacy.id).windowId, two.id);
-  assert.equal(restarted.read(a.id).windowId, one.id);
+  assert.equal((await restarted.read(legacy.id)).windowId, two.id);
+  assert.equal((await restarted.read(a.id)).windowId, one.id);
   await assert.rejects(service.create({ cwd: storage.root, windowId: randomUUID() }), /窗口/);
+});
+
+test('live desktop bindings follow reopened groups without persisting runtime windows or changing history ownership', async t => {
+  const storage = await temporaryStore(t);
+  const options = { storage, pluginId: 'ai-test', runtime: { launch: async () => ({ engineId: 'codex', env: {} }) } };
+  const service = new Conversations(options);
+  await service.load();
+  const first = await service.registerWindow({ id: randomUUID() });
+  const second = await service.registerWindow({ id: randomUUID() });
+  const record = await service.create({ cwd: storage.root, windowId: first.id });
+  const hostWindowId = randomUUID();
+  const siblingId = randomUUID();
+  await service.registerWindow({ id: first.id, hostWindowId });
+  await service.registerWindow({ id: first.id, hostWindowId: siblingId });
+  const capture = new CaptureManager({ conversations: service });
+  assert.deepEqual(capture.catalog().windows[0].hostWindowIds, [hostWindowId, siblingId]);
+  await service.registerWindow({ id: second.id, hostWindowId });
+  assert.deepEqual(capture.catalog().windows.map(group => group.hostWindowIds), [[siblingId], [hostWindowId]]);
+  assert.equal((await service.read(record.id)).windowId, first.id);
+  const restarted = new Conversations(options);
+  await restarted.load();
+  assert.deepEqual(new CaptureManager({ conversations: restarted }).catalog().windows.map(group => group.hostWindowIds), [[], []]);
+  assert.equal((await restarted.read(record.id)).windowId, first.id);
 });

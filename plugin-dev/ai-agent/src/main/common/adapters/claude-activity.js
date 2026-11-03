@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { needsUserConfirmation } from './text-confirmation.js';
 
 const events = ['UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure',
   'Stop', 'StopFailure', 'Notification', 'Elicitation', 'ElicitationResult'];
@@ -7,13 +8,22 @@ const events = ['UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostTool
 function activity(event) {
   const blocked = { PermissionRequest: 'permission', Elicitation: 'question' }[event.hook_event_name];
   if (blocked || event.hook_event_name === 'PreToolUse' && event.tool_name === 'AskUserQuestion') {
-    return { activity: 'idle', blocked: blocked || 'question' };
+    return { activity: 'idle', blocked: blocked || 'question', question: null };
   }
   if (event.hook_event_name === 'Notification') {
     const kind = { permission_prompt: 'permission', elicitation_dialog: 'question', elicitation_url_dialog: 'question' }[event.notification_type];
-    return kind ? { activity: 'idle', blocked: kind } : null;
+    return kind ? { activity: 'idle', blocked: kind, question: null } : null;
   }
-  return { activity: { Stop: 'done', StopFailure: 'error' }[event.hook_event_name] || 'working', blocked: null };
+  if (event.hook_event_name === 'Stop') {
+    let blocked = null;
+    try {
+      blocked = needsUserConfirmation(event.last_assistant_message) ? 'question' : null;
+    } catch (error) {
+      console.error('[claude:confirmation]', { sessionId: event.session_id, stack: error.stack });
+    }
+    return { activity: 'done', blocked, question: blocked ? event.last_assistant_message : null };
+  }
+  return { activity: { Stop: 'done', StopFailure: 'error' }[event.hook_event_name] || 'working', blocked: null, question: null };
 }
 
 // Hooks only report lifecycle. Empty responses deliberately leave every native permission decision to the user.

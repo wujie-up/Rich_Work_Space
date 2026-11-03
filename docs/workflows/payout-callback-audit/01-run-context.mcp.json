@@ -1,0 +1,5 @@
+{
+  "database": "treasury",
+  "limit": 2,
+  "sql": "SELECT DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s') AS as_of,\nCAST(COALESCE(MAX(id), 0) AS CHAR) AS high_water\nFROM financial.payment_channel_trade_event_record"
+}

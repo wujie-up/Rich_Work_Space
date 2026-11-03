@@ -45,6 +45,7 @@ test('remote HTTP authentication, two independent downstreams, resources and pro
   services.log((await services.list()).find(value=>value.id==='remote'),'error','echoed upstream-secret');
   assert.ok(!(await services.logs('remote')).includes('upstream-secret'));
   await services.start('remote');
+  assert.equal((await services.list()).find(value=>value.id==='remote').clients,0);
   const connection=(await services.connections()).services.find(value=>value.id==='remote');
   assert.ok(!JSON.stringify(connection).includes('upstream-secret'));
   const clients=await Promise.all([1,2].map(async()=>{
@@ -53,10 +54,12 @@ test('remote HTTP authentication, two independent downstreams, resources and pro
     await client.connect(transport);
     return {client,transport};
   }));
+  assert.equal((await services.list()).find(value=>value.id==='remote').clients,2);
   for(const {client} of clients){assert.equal((await client.callTool({name:'increment',arguments:{}})).content[0].text,'1');}
   assert.equal((await clients[1].client.readResource({uri:'test://value'})).contents[0].text,'resource-value');
   assert.equal((await clients[1].client.getPrompt({name:'greet'})).messages[0].content.text,'hello');
   await clients[0].transport.terminateSession();await clients[0].client.close();
+  assert.equal((await services.list()).find(value=>value.id==='remote').clients,1);
   assert.equal((await clients[1].client.callTool({name:'increment',arguments:{}})).content[0].text,'2');
   await services.stop('remote');
   await assert.rejects(clients[1].client.listTools());

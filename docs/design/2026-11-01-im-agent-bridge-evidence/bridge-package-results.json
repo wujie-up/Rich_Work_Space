@@ -1,0 +1,18 @@
+[
+  {
+    "id": "ai-agent-sessions",
+    "version": "0.6.121",
+    "files": 116,
+    "path": "plugin-dev/dist/ai-agent-sessions-0.6.121.plg",
+    "bytes": 813282,
+    "sha256": "940e030ddce504b5dc0bb6e90e5a6c5e3e2f1162805a9c9e9074675e3e3e68fb"
+  },
+  {
+    "id": "message-bridge",
+    "version": "0.1.0",
+    "files": 7893,
+    "path": "plugin-dev/dist/message-bridge-0.1.0.plg",
+    "bytes": 19439275,
+    "sha256": "c105db7ba663c27a4f3af24d0c81beeb9ee5922c747ef9ed002a0846fcb7dd97"
+  }
+]

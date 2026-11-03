@@ -6,6 +6,7 @@ import { createStdioTransport } from '../os/posix/transport.js';
 
 const LIMIT = 1024 * 1024;
 const TIMEOUT = 18000;
+const TOOL_TIMEOUT = 600000;
 const failure = (code, message) => Object.assign(Error(message), { code });
 
 export class McpServices {
@@ -70,7 +71,11 @@ export class McpServices {
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(input.id) || typeof input.name !== 'string' || !input.name.trim()) {
       throw failure('INVALID_ARGUMENT', '服务需要有效 ID 和名称');
     }
-    const config = { id: input.id, name: input.name.trim(), transport: input.transport };
+    const description = input.description === undefined ? existing?.description || '' : input.description;
+    if (typeof description !== 'string' || description.length > 2000) {
+      throw failure('INVALID_ARGUMENT', '功能描述必须是最多 2000 字符的文本');
+    }
+    const config = { id: input.id, name: input.name.trim(), description: description.trim(), transport: input.transport };
     if (input.transport === 'script') {
       Object.assign(config, await this.deployments.save(input, existing));
     } else if (input.transport === 'stdio') {
@@ -120,18 +125,8 @@ export class McpServices {
     }
     const entry = `${new Date().toISOString()} ${level} ${text.slice(0, 8192)}`;
     this.entries.set(config.id, Buffer.from(`${this.entries.get(config.id) || ''}${entry}\n`).subarray(-LIMIT).toString());
-    if (!config.debug && !this.logWrites.has(config.id)) {
-      // Coalesce noisy stderr while retaining only the bounded latest log.
-      const write = (async () => {
-        let saved;
-        do {
-          saved = this.entries.get(config.id);
-          await this.context.storage.writeJson(`plugin-data/${this.context.pluginId}/logs/${config.id}.json`, saved);
-        } while (saved !== this.entries.get(config.id));
-      })();
-      this.logWrites.set(config.id, write);
-      write.catch(error => console.error('[mcp:log]', { serviceId: config.id, message: error.message }))
-        .finally(() => this.logWrites.delete(config.id));
+    if (!config.debug) {
+      this.persistLogs(config.id).catch(error => console.error('[mcp:log]', { serviceId: config.id, message: error.message }));
     }
     this.context.emit?.('mcp.changed', { serviceId: config.id });
     (level === 'error' ? console.error : console.info)('[mcp]', { serviceId: config.id, message: level === 'error' ? '操作失败，请查看插件日志' : text.slice(0, 160) });
@@ -140,6 +135,32 @@ export class McpServices {
   async logs(id) {
     await this.definitions();
     return this.entries.get(id) || '';
+  }
+
+  persistLogs(id) {
+    if (this.logWrites.has(id)) { return this.logWrites.get(id); }
+    // Serialize clearing and incoming logs so an older write cannot restore cleared entries.
+    const write = (async () => {
+      try {
+        let saved;
+        do {
+          saved = this.entries.get(id);
+          await this.context.storage.writeJson(`plugin-data/${this.context.pluginId}/logs/${id}.json`, saved);
+        } while (saved !== this.entries.get(id));
+      } finally {
+        this.logWrites.delete(id);
+      }
+    })();
+    this.logWrites.set(id, write);
+    return write;
+  }
+
+  async clearLogs(id) {
+    if (!(await this.definitions()).some(service => service.id === id)) { throw failure('SERVICE_NOT_FOUND', '服务不存在'); }
+    this.entries.set(id, '');
+    await this.persistLogs(id);
+    this.context.emit?.('mcp.changed', { serviceId: id });
+    console.info('[mcp:logs:clear]', { serviceId: id });
   }
 
   async sdk() {
@@ -154,10 +175,17 @@ export class McpServices {
     return this.modules;
   }
 
-  async connect(config, signal) {
+  async connect(config, signal, peer) {
     if (config.transport === 'script') { config = await this.deployments.launch(config); }
     const sdk = await this.sdk();
-    const client = new sdk.Client({ name: 'work-desk-mcp', version: '0.1.0' });
+    const client = new sdk.Client({ name: 'work-desk-mcp', version: '0.1.0' }, { capabilities: peer?.capabilities || {} });
+    // Preserve only capabilities negotiated by this native client; management connections cannot answer on its behalf.
+    for (const [capability, schema, result] of [['elicitation', 'ElicitRequestSchema', 'ElicitResultSchema'],
+      ['roots', 'ListRootsRequestSchema', 'ListRootsResultSchema'], ['sampling', 'CreateMessageRequestSchema', 'CreateMessageResultWithToolsSchema']]) {
+      if (peer?.capabilities[capability]) {
+        client.setRequestHandler(sdk.types[schema], (request, extra) => peer.request(request, sdk.types[result], extra.signal));
+      }
+    }
     const transport = config.transport === 'stdio' ? createStdioTransport(config, sdk.stdio, (pid, active) => {
       active ? this.pids.add(pid) : this.pids.delete(pid);
       this.context.ownProcesses([...this.pids]);
@@ -171,7 +199,7 @@ export class McpServices {
           return await fetch(url, { ...options, signal: AbortSignal.any([
             ...(options.signal ? [options.signal] : []),
             ...(options.method !== 'DELETE' && signal ? [signal] : []),
-            options.method === 'GET' ? opening.signal : AbortSignal.timeout(options.method === 'DELETE' ? 1500 : TIMEOUT)
+            options.method === 'GET' ? opening.signal : AbortSignal.timeout(options.method === 'DELETE' ? 1500 : TOOL_TIMEOUT)
           ]) });
         } finally {
           clearTimeout(timer);
@@ -300,32 +328,37 @@ export class McpServices {
     // Reserve before connecting so concurrent initialize and stop share one lifecycle.
     const session = {};
     runtime.sessions.add(session);
-    session.connecting = this.connect(runtime.config, runtime.controller.signal);
+    let server;
+    session.connecting = this.connect(runtime.config, runtime.controller.signal, { capabilities: body.params.capabilities,
+      request: (request, schema, signal) => server.request(request, schema, { signal, timeout: TOOL_TIMEOUT }) });
     try {
       const upstream = await session.connecting;
       session.upstream = upstream;
       if (session.closed || runtime.controller.signal.aborted) { await upstream.close(); return; }
       const caps = upstream.getServerCapabilities();
       const capabilities = Object.fromEntries(['tools', 'resources', 'prompts'].filter(key => caps[key]).map(key => [key, { ...(caps[key].listChanged ? { listChanged: true } : {}) }]));
-      const server = new sdk.Server({ name: 'work-desk-gateway', version: '0.1.0' }, { capabilities });
+      server = new sdk.Server({ name: 'work-desk-gateway', version: '0.1.0' }, { capabilities });
       const routes = [['tools', 'ListToolsRequestSchema', 'listTools'], ['tools', 'CallToolRequestSchema', 'callTool'],
         ['resources', 'ListResourcesRequestSchema', 'listResources'], ['resources', 'ListResourceTemplatesRequestSchema', 'listResourceTemplates'],
         ['resources', 'ReadResourceRequestSchema', 'readResource'], ['prompts', 'ListPromptsRequestSchema', 'listPrompts'],
         ['prompts', 'GetPromptRequestSchema', 'getPrompt']];
       for (const [capability, schema, method] of routes) {
         if (capabilities[capability]) {
-          server.setRequestHandler(sdk.types[schema], async request => {
-            const result = method === 'callTool' ? await upstream.callTool(request.params, undefined, { timeout: TIMEOUT })
-              : await upstream[method](request.params, { timeout: TIMEOUT });
+          server.setRequestHandler(sdk.types[schema], async (request, extra) => {
+            const result = method === 'callTool' ? await upstream.callTool(request.params, undefined, { timeout: TOOL_TIMEOUT, signal: extra.signal })
+              : await upstream[method](request.params, { timeout: TIMEOUT, signal: extra.signal });
             if (Buffer.byteLength(JSON.stringify(result)) > LIMIT) { throw Error('MCP 响应超过 1 MiB'); }
             return result;
           });
         }
       }
-      // Forward changes without exposing unsupported server-to-client requests.
+      // Native clients retain live tool/resource/prompt discovery on their own upstream session.
       for (const [capability, schema, method] of [['tools', 'ToolListChangedNotificationSchema', 'sendToolListChanged'],
         ['resources', 'ResourceListChangedNotificationSchema', 'sendResourceListChanged'], ['prompts', 'PromptListChangedNotificationSchema', 'sendPromptListChanged']]) {
         if (capabilities[capability]?.listChanged) { upstream.setNotificationHandler(sdk.types[schema], () => server[method]()); }
+      }
+      if (body.params.capabilities.roots?.listChanged) {
+        server.setNotificationHandler(sdk.types.RootsListChangedNotificationSchema, () => upstream.sendRootsListChanged());
       }
       const transport = new sdk.StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID,
         onsessioninitialized: id => { session.id = id; runtime.clients.set(id, session); },
@@ -408,7 +441,7 @@ export class McpServices {
       runtime.evidence.calls.push(call);
     }
     try {
-      const result = await runtime.management.callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT, signal });
+      const result = await runtime.management.callTool({ name, arguments: args }, undefined, { timeout: TOOL_TIMEOUT, signal });
       if (Buffer.byteLength(JSON.stringify(result)) > LIMIT) { throw Error('MCP 响应超过 1 MiB'); }
       Object.assign(call, { state: result.isError ? 'failed' : 'succeeded', result });
       return result;

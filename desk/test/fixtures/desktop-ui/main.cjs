@@ -1,4 +1,4 @@
-const { app, BrowserWindow, protocol, net } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain } = require('electron');
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -7,6 +7,28 @@ protocol.registerSchemesAsPrivileged(['desk-plugin', 'desk-host'].map(scheme => 
 
 // Exercise the actual desktop renderer without discovering or starting business plugins.
 app.whenReady().then(async () => {
+  const { DesktopFiles } = await import('../../../src/main/common/desktop-files.js');
+  const { Storage } = await import('../../../src/main/common/storage.js');
+  const files = new DesktopFiles(new Storage(app.getPath('userData')));
+  const { createHandlers } = await import('../../../src/main/common/ipc.js');
+  let clipboardFiles = [];
+  const handlers = createHandlers({ storage: new Storage(app.getPath('userData')), fileClipboard: {
+    write: async paths => { clipboardFiles = paths; }, read: async () => clipboardFiles
+  } });
+  ipcMain.handle('desktop-files', async (_event, method, ...args) => {
+    if (method === 'openExternal') {
+      global.lastExternalFile = args[0];
+      return;
+    }
+    if (method === 'trash') {
+      global.lastTrashedFile = await files.resolve(args[0]);
+      return require('node:fs/promises').unlink(global.lastTrashedFile);
+    }
+    if (['properties', 'copy', 'paste'].includes(method)) {
+      return handlers[`desktop.${method}`](...args);
+    }
+    return files[method](...args);
+  });
   protocol.handle('desk-host', request => new URL(request.url).pathname.startsWith('/plugin-icons/') ? new Response('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 5h16v14H4Z" fill="none" stroke="gray"/></svg>',
     { headers: { 'Content-Type': 'image/svg+xml' } })
     : net.fetch(pathToFileURL(join(__dirname, '../../../dist/renderer', new URL(request.url).pathname.slice(1))).href));

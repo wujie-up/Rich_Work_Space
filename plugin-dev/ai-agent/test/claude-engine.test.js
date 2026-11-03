@@ -47,3 +47,36 @@ test('Claude question denial does not require an answer payload', () => {
   engine.respond('decline-question', { decision: 'decline' });
   assert.equal(writes[0].response.response.behavior, 'deny');
 });
+
+test('background authorization allows full access while ordinary Claude plans stay read only', async () => {
+  const { AppServer } = await import('../src/main/common/app-server.js');
+  const original = AppServer.prototype.start;
+  const launches = [];
+  AppServer.prototype.start = async input => { launches.push(input); };
+  try {
+    await new ClaudeEngine().start({ plan: true, fullyAuthorized: true });
+    await new ClaudeEngine().start({ plan: false, fullyAuthorized: true });
+    await new ClaudeEngine().start({ plan: true, fullyAuthorized: false });
+    assert.equal(launches[0].protocolArgs[launches[0].protocolArgs.indexOf('--permission-mode') + 1], 'bypassPermissions');
+    assert.equal(launches[2].protocolArgs[launches[2].protocolArgs.indexOf('--permission-mode') + 1], 'plan');
+    assert.equal(launches[1].protocolArgs[launches[1].protocolArgs.indexOf('--permission-mode') + 1], 'bypassPermissions');
+  } finally {
+    AppServer.prototype.start = original;
+  }
+});
+
+test('bridge receives the primary native final result with thread and turn identities', async () => {
+  const events = [];
+  const engine = new ClaudeEngine({ onEvent: event => events.push(event) });
+  engine.child = { stdin: { write() {} } };
+  engine.threadId = 'primary';
+  const { turn } = await engine.request('turn/start', { input: [{ text: 'hello' }] });
+  engine.receive({ type: 'assistant', parent_tool_use_id: 'child-tool', message: { content: [{ type: 'text', text: 'child output' }] } });
+  engine.receive({ type: 'result', parent_tool_use_id: 'child-tool', result: 'child result' });
+  engine.receive({ type: 'result', session_id: 'primary', result: 'final answer' });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].params.threadId, 'primary');
+  assert.equal(events[0].params.turn.id, turn.id);
+  assert.equal(events[0].params.turn.items[0].phase, 'final_answer');
+  assert.equal(events[0].params.turn.items[0].text, 'final answer');
+});

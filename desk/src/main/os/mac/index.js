@@ -1,3 +1,4 @@
+export { createFileClipboard } from './file-clipboard.js';
 import { cleanApplicationEntries } from './installation.js';
 export { loadLoginPath } from './environment.js';
 export { stopProcessGroups } from '../posix/processes.js';
@@ -11,12 +12,16 @@ export async function ensureInstallation(app, checkEntries = cleanApplicationEnt
     return true;
   }
   if (app.isInApplicationsFolder()) {
-    await checkEntries().catch(error => console.error('[host:installation-entries]', { message: error.message }));
+    // Installation already verifies synchronously; recurring repair must not block the first frame.
+    const check = setTimeout(() => {
+      checkEntries().catch(error => console.error('[host:installation-entries]', { stack: error.stack }));
+    }, 2000);
+    check.unref();
     return true;
   }
   console.info('[host:install]', { action: 'move-to-applications' });
   if (!app.moveToApplicationsFolder()) {
-    throw Error('请将 DeckPg 安装到应用程序目录后再启动。');
+    throw Error('请将 DeskPG 安装到应用程序目录后再启动。');
   }
   return false;
 }

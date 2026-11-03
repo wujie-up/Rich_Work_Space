@@ -4,6 +4,8 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import * as tar from 'tar';
 import { ManagedRuntime, isolatedEnvironment } from '../src/main/common/managed-runtime.js';
 
@@ -41,14 +43,46 @@ test('runtime rejects failed protocol without publishing', async t => {
   assert.equal((await runtime.status()).state, 'missing');
 });
 
-test('isolated environment does not inherit system credentials or user config and uses native OS path', () => {
+test('isolated environment does not inherit system credentials or user config', t => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  t.after(() => {
+    if (previousKey === undefined) { delete process.env.OPENAI_API_KEY; }
+    else { process.env.OPENAI_API_KEY = previousKey; }
+  });
   process.env.OPENAI_API_KEY = 'must-not-copy';
   const env = isolatedEnvironment('/managed/profile');
   assert.equal(env.OPENAI_API_KEY, undefined);
   assert.equal(env.HOME, '/managed/profile/home');
   assert.equal(env.CODEX_HOME, '/managed/profile/codex');
-  assert.equal(env.PATH.includes('/usr/local'), false);
-  delete process.env.OPENAI_API_KEY;
+  assert.equal(env.XDG_CONFIG_HOME, '/managed/profile/config');
+});
+
+test('managed tools can resolve local helpers without inheriting the host profile or credentials', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'ai-native-path-'));
+  const previousPath = process.env.PATH;
+  t.after(async () => {
+    if (previousPath === undefined) { delete process.env.PATH; }
+    else { process.env.PATH = previousPath; }
+    await rm(root, { recursive: true, force: true });
+  });
+  await writeFile(join(root, 'browser-helper'), '#!/bin/sh\nprintf NATIVE_HELPER_OK', { mode: 0o700 });
+  process.env.PATH = `${root}:/usr/bin:/bin`;
+  const { stdout } = await promisify(execFile)('browser-helper', [], { env: isolatedEnvironment(join(root, 'profile')) });
+  assert.equal(stdout, 'NATIVE_HELPER_OK');
+});
+
+test('managed PATH retains standard package manager directories when launched outside a terminal', t => {
+  const previousPath = process.env.PATH;
+  t.after(() => {
+    if (previousPath === undefined) { delete process.env.PATH; }
+    else { process.env.PATH = previousPath; }
+  });
+  process.env.PATH = '/usr/bin:/bin';
+  const paths = isolatedEnvironment('/managed/profile').PATH.split(':');
+  assert.ok(paths.includes('/usr/local/bin'));
+  if (process.platform === 'darwin') {
+    assert.ok(paths.includes('/opt/homebrew/bin'));
+  }
 });
 
 test('runtime rejects an archive symlink even with an otherwise valid pinned digest', async t => {
@@ -59,4 +93,29 @@ test('runtime rejects an archive symlink even with an otherwise valid pinned dig
   const runtime = new ManagedRuntime({ root, pin, tar, probe: async () => assert.fail('must not execute unsafe package') });
   await assert.rejects(runtime.install(archive), /不安全路径/);
   assert.equal((await runtime.status()).state, 'missing');
+});
+
+test('updating active version retains the historical runtime and failed update leaves the active index intact', async t => {
+  const { root, archive, pin } = await fixture(t);
+  const old = new ManagedRuntime({ root, pin, tar, probe: async () => {} });
+  await old.install(archive);
+  const newer = new ManagedRuntime({ root, pin: { ...pin, runtimeId: 'codex-new', version: '2.0.0' }, tar, probe: async () => {} });
+  await newer.install(archive);
+  assert.equal((await old.status()).version, '2.0.0');
+  assert.equal((await newer.launch('default', 'codex-test')).runtimeVersion, '1.0.0');
+  const broken = new ManagedRuntime({ root, pin: { ...pin, runtimeId: 'codex-bad', version: '3.0.0' }, tar,
+    probe: async () => { throw Error('bad protocol'); } });
+  await assert.rejects(broken.install(archive), /bad protocol/);
+  assert.equal((await newer.status()).version, '2.0.0');
+});
+
+
+test('explicit historical runtime remains launchable after removing the active index', async t => {
+  const { root, archive, pin } = await fixture(t);
+  const runtime = new ManagedRuntime({ root, pin, tar, probe: async () => {} });
+  await runtime.install(archive);
+  await rm(join(root, 'runtimes', 'index.json'));
+  assert.equal((await runtime.status()).state, 'missing');
+  assert.equal((await runtime.status(pin.runtimeId)).state, 'ready');
+  assert.equal((await runtime.launch('default', pin.runtimeId)).runtimeVersion, pin.version);
 });

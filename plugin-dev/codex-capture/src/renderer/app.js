@@ -1,6 +1,9 @@
-import { call, subscribe } from './api.js';
+import { pageLifecycle, pollVisible } from '../../../../desk/src/resource/page-lifecycle.js';
+import '../../../../desk/src/resource/controls.css';
+import { call, listWindows, subscribe } from './api.js';
 import './style.css';
 
+const lifecycle = pageLifecycle();
 const $ = selector => document.querySelector(selector);
 let state;
 let selected;
@@ -20,22 +23,25 @@ function report(error) { $('#error').textContent = error.message; }
 function renderStatus(value) {
   state = value;
   $('#toggle').disabled = busy || !target()?.supported;
-  $('#toggle').textContent = value.enabled ? '停止记录' : '开始记录';
+  $('#toggle').innerHTML = value.enabled ? '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5h14v14H5z"/></svg>' : '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 4 12 8-12 8z"/></svg>';
+  $('#toggle').title = value.enabled ? '停止记录' : '开始记录';
+  $('#toggle').setAttribute('aria-label', $('#toggle').title);
   const labels = { unselected: '请选择 Agent 窗口和具体对话', stopped: '已停止记录，已有连接继续转发',
     connected: '已接入，等待请求', captured: '已捕获目标对话的请求和响应', unavailable: '目标 Agent 已失联，请刷新并重新选择',
     unsupported: '该引擎尚不支持网络抓包' };
   $('#status').textContent = value.state === 'waiting'
     ? (value.running ? '等待当前轮次结束，下一轮接入' : '已开启，等待该对话的下一次请求') : labels[value.state] || '请选择目标对话';
   if (value.logDirectory) { $('#directory').textContent = `日志目录：${value.logDirectory}`; }
-  if (value.error || value.warning) { report(Error(value.error || value.warning)); }
+  $('#error').textContent = value.error || value.warning || '';
 }
 
 function target() {
-  const [sourceIndex, windowId] = $('#agent-window').value.split('/');
+  const [sourceIndex, selectionId] = $('#agent-window').value.split('/');
   const source = sources[Number(sourceIndex)];
-  const group = source?.windows.find(value => value.id === windowId);
+  const group = source?.windows.find(value => value.selectionId === selectionId);
   const record = group?.conversations.find(value => value.id === $('#conversation').value);
-  return record ? { pluginId: source.pluginId, instanceId: source.instanceId, windowId, conversationId: record.id, supported: record.supported } : null;
+  return record ? { pluginId: source.pluginId, instanceId: source.instanceId, windowId: group.id,
+    conversationId: record.id, supported: record.supported } : null;
 }
 
 function targetIdentity(value) {
@@ -48,8 +54,8 @@ function sameTarget(one, two) { return JSON.stringify(targetIdentity(one)) === J
 
 function conversations() {
   const previous = $('#conversation').value;
-  const [index, windowId] = $('#agent-window').value.split('/');
-  const group = sources[Number(index)]?.windows.find(value => value.id === windowId);
+  const [index, selectionId] = $('#agent-window').value.split('/');
+  const group = sources[Number(index)]?.windows.find(value => value.selectionId === selectionId);
   $('#conversation').replaceChildren(new Option('选择具体对话', ''));
   for (const record of group?.conversations || []) {
     $('#conversation').add(new Option(`${record.name || '新对话'} · ${record.engineId}${record.supported ? '' : '（不支持）'}`, record.id));
@@ -58,21 +64,35 @@ function conversations() {
 }
 
 async function discover() {
-  const previous = targetIdentity(target());
-  sources = await call('capture.sources');
+  const [catalogs, liveWindows] = await Promise.all([call('capture.sources'), listWindows()]);
+  // Stored conversation groups are history, not desktop windows. Only the host can establish liveness and display names.
+  const current = catalogs.map(source => ({ ...source, windows: liveWindows.filter(view => view.pluginId === source.pluginId).flatMap(view => {
+    const group = source.windows.find(group => group.hostWindowIds?.includes(view.id));
+    return group ? [{ ...group, selectionId: view.id, name: view.name }] : [];
+  }) }));
+  if (JSON.stringify(current) === JSON.stringify(sources)) { return; }
+  const previous = targetIdentity(target()) || state?.target;
+  const [previousIndex, selectionId] = $('#agent-window').value.split('/');
+  const previousSource = sources[Number(previousIndex)];
+  sources = current;
   $('#agent-window').replaceChildren(new Option('选择 Agent 窗口', ''));
   sources.forEach((source, index) => {
     for (const group of source.windows) {
-      $('#agent-window').add(new Option(`${source.pluginId} · ${group.name} · ${group.id.slice(0, 8)}`, `${index}/${group.id}`));
+      const option = new Option(group.name, `${index}/${group.selectionId}`);
+      option.title = `${source.pluginId} · ${group.selectionId}`;
+      $('#agent-window').add(option);
     }
   });
-  const restored = previous || state?.target;
+  const restored = selectionId ? previousSource : state?.target;
   if (restored) {
     const index = sources.findIndex(source => source.pluginId === restored.pluginId && source.instanceId === restored.instanceId);
-    if (index >= 0) { $('#agent-window').value = `${index}/${restored.windowId}`; conversations(); $('#conversation').value = restored.conversationId; }
-    else { resetOutput(); }
-  } else { conversations(); }
-  if (!sources.length) { report(Error('未发现支持会话抓包的 Agent，请启用 AI 插件 0.6.0 或更新版本')); }
+    const group = sources[index]?.windows.find(group => selectionId ? group.selectionId === selectionId : group.id === restored.windowId);
+    if (group) { $('#agent-window').value = `${index}/${group.selectionId}`; }
+  }
+  conversations();
+  if (!selectionId && restored) { $('#conversation').value = restored.conversationId; }
+  if (previous && !sameTarget(previous, target())) { await changeTarget(); }
+  if (!sources.length) { report(Error('未发现支持会话抓包的 Agent，请启用新版 AI 插件')); }
 }
 
 function resetOutput() {
@@ -82,7 +102,8 @@ function resetOutput() {
   fragment = '';
   lastDirection = null;
   decoder = new TextDecoder();
-  $('#output').textContent = '';
+  $('#request-output').textContent = '';
+  $('#response-output').textContent = '';
   $('#records').replaceChildren();
   $('#empty').hidden = false;
   $('#count').textContent = '';
@@ -129,7 +150,7 @@ function display(event) {
 }
 
 async function more() {
-  if (!selected || loading) { return; }
+  if (!lifecycle.visible() || !selected || loading) { return; }
   const current = generation;
   let remaining = false;
   loading = true;
@@ -141,23 +162,28 @@ async function more() {
     offset = page.offset;
     const lines = fragment.split('\n');
     fragment = lines.pop();
-    const output = $('#output');
-    const follow = output.scrollHeight - output.scrollTop - output.clientHeight < 60;
-    let addition = '';
+    const additions = { request: '', response: '' };
     for (const line of lines) {
-      if (line) { addition += display(JSON.parse(line)); }
+      if (!line) { continue; }
+      const event = JSON.parse(line);
+      const direction = event.type.startsWith('request.') ? 'request' : 'response';
+      additions[direction] += display(event);
     }
-    output.textContent += addition;
-    if (output.textContent.length > maxDisplay) {
-      output.textContent = `[窗口仅保留最近 2 MB，完整数据在本地日志中]\n${output.textContent.slice(-maxDisplay)}`;
+    for (const [direction, addition] of Object.entries(additions)) {
+      const output = $(`#${direction}-output`);
+      const follow = output.scrollHeight - output.scrollTop - output.clientHeight < 60;
+      output.textContent += addition;
+      if (output.textContent.length > maxDisplay) {
+        output.textContent = `[每栏仅保留最近 2 MB，完整数据在本地日志中]\n${output.textContent.slice(-maxDisplay)}`;
+      }
+      if (follow) { output.scrollTop = output.scrollHeight; }
     }
-    if (follow) { output.scrollTop = output.scrollHeight; }
     $('#more').disabled = offset >= page.bytes;
     $('#position').textContent = `${offset.toLocaleString()} / ${page.bytes.toLocaleString()} 字节`;
     remaining = offset < page.bytes;
   } finally {
     loading = false;
-    if (current !== generation || remaining) { queueMicrotask(() => more().catch(report)); }
+    if (lifecycle.visible() && (current !== generation || remaining)) { queueMicrotask(() => more().catch(report)); }
   }
 }
 
@@ -168,7 +194,8 @@ async function select(id) {
   fragment = '';
   lastDirection = null;
   decoder = new TextDecoder();
-  $('#output').textContent = '';
+  $('#request-output').textContent = '';
+  $('#response-output').textContent = '';
   $('#selection').textContent = id;
   await list();
   if (loading) { setTimeout(() => more().catch(report), 100); }
@@ -190,8 +217,9 @@ async function changeTarget() {
   resetOutput();
   if (target()?.supported) { await configure(enabled); await list(); }
   else {
-    if (state?.enabled) { await call('capture.configure', { enabled: false }); }
-    renderStatus({ enabled: false, state: target() ? 'unsupported' : 'unselected' });
+    try {
+      if (state?.enabled) { await call('capture.configure', { enabled: false }); }
+    } finally { renderStatus({ enabled: false, state: target() ? 'unsupported' : 'unselected' }); }
   }
 }
 $('#toggle').addEventListener('click', () => configure(!state.enabled).catch(report));
@@ -199,19 +227,28 @@ $('#agent-window').addEventListener('change', () => { conversations(); changeTar
 $('#conversation').addEventListener('change', () => changeTarget().catch(report));
 $('#refresh').addEventListener('click', () => refresh(true).catch(report));
 $('#more').addEventListener('click', () => more().catch(report));
+// 只切换可见栏，避免重新读取日志或丢失另一方向的内容。
+$('#direction').addEventListener('change', () => {
+  const direction = $('#direction').value;
+  $('#output').dataset.direction = direction;
+  $('#request-pane').hidden = direction === 'response';
+  $('#response-pane').hidden = direction === 'request';
+});
 $('#raw').addEventListener('change', () => { if (selected) { select(selected).catch(report); } });
 subscribe(event => {
+  if (event.type === 'capture.unavailable') { report(Error(`Agent 连接暂时不可用：${event.message || event.code}`)); return; }
   if (event.type === 'capture.error') { report(Error(`日志写入失败：${event.code}`)); return; }
-  if (!refreshTimer) {
+  if (lifecycle.visible() && !refreshTimer) {
     refreshTimer = setTimeout(async () => {
       refreshTimer = null;
+      if (!lifecycle.visible()) { return; }
       try { await list(); await more(); } catch (error) { report(error); }
     }, 250);
   }
 });
 
 async function refresh(withSources = false) {
-  if (busy) { return; }
+  if (busy || !lifecycle.visible()) { return; }
   if (withSources) { await discover(); }
   const expected = targetIdentity(target());
   const status = await call('capture.status');
@@ -219,7 +256,6 @@ async function refresh(withSources = false) {
   if (target() && sameTarget(target(), status.target)) { renderStatus(status); await list(); await more(); }
   else { renderStatus({ enabled: false, state: target() && !target().supported ? 'unsupported' : 'unselected' }); }
 }
-try { state = await call('capture.status'); await discover(); await refresh(); }
+try { state = await call('capture.status'); await discover(); }
 catch (error) { report(error); }
-const poll = setInterval(() => refresh().catch(report), 1500);
-window.addEventListener('pagehide', () => clearInterval(poll), { once: true });
+pollVisible(lifecycle, () => refresh(true), 1500, { onError: report });

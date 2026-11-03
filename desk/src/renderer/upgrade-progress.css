@@ -1,0 +1,20 @@
+/* Only the circle is opaque, keeping progress readable without a rectangular panel. */
+:root body dialog#plugin-upgrade-progress {
+  width: 220px;
+  max-width: calc(100vw - 32px);
+  padding: 24px;
+  margin: auto;
+  border: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  overflow: hidden;
+}
+:root body dialog#plugin-upgrade-progress::backdrop { background: transparent; backdrop-filter: none; }
+.upgrade-ring { position: relative; width: 156px; max-width: 100%; aspect-ratio: 1; margin: auto; }
+.upgrade-ring svg { display: block; width: 100%; height: 100%; fill: none; stroke-width: 5; }
+.upgrade-track { fill: var(--panel); stroke: var(--border); }
+.upgrade-fill { stroke: #b6a5e7; stroke-linecap: round; stroke-dasharray: 66 34; transform-origin: center; animation: upgrade-rotate 1.5s linear infinite; }
+.upgrade-label { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text); font-size: 16px; }
+@keyframes upgrade-rotate { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+@media (prefers-reduced-motion: reduce) { .upgrade-fill { animation: none; } }

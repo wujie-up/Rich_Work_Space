@@ -1,0 +1,38 @@
+{
+  "testedAt": "2026-11-03T04:36:54.420Z",
+  "success": true,
+  "sentParts": 1,
+  "totalParts": 1,
+  "type": "explicitly-authorized-test-notification",
+  "containsBusinessOrders": false,
+  "relatedTests": {
+    "passed": 28,
+    "failed": 0,
+    "includes": [
+      "HMAC vector",
+      "settings secrecy and preservation",
+      "Unicode/chunking",
+      "code=0 response validation",
+      "partial failure no retry",
+      "cancel before first POST",
+      "real workflow engine to Feishu mock",
+      "real Chromium configuration panel",
+      "workflow transfer"
+    ]
+  },
+  "reference": "sl-platform/dbai-sdk/dbai-sdk-feishu/src/main/java/com/dbai/sdk/feishu/utils/FeiShuRobotNotifyUtil.java:196-225",
+  "workFlowVersion": "0.5.55",
+  "credentialsInPackage": false,
+  "unverified": [
+    "User-installed scheduled full-report delivery at the actual daily 10:00 boundary"
+  ],
+  "build": {
+    "command": "npm run build",
+    "exitCode": 0
+  },
+  "package": {
+    "path": "plugin-dev/dist/work-flow-0.5.55.plg",
+    "integrityVerified": true,
+    "providedCredentialsAbsent": true
+  }
+}

@@ -83,3 +83,61 @@ test('gateway detects catalog revision changes and replaces stale discovered han
   assert.equal(stale.isError, true);
   assert.match(stale.content[0].text, /失效/);
 });
+
+test('selected unavailable MCP services fail global conversation startup explicitly', async t => {
+  const gateway = new CapabilityGateway({ capabilities: { discover: async () => ({ providers: [] }) },
+    selection: { mode: 'selected', services: [{ pluginId: 'mcp', serviceId: 'missing' }] } });
+  t.after(() => gateway.close());
+  await assert.rejects(gateway.start(), /MCP.*不可用/);
+});
+
+test('selected MCP services can be invoked while excluded service tools cannot be called', async t => {
+  const invoked = [];
+  const capabilities = {
+    discover: async () => ({ providers: ['allowed', 'excluded'].map(serviceId => ({
+      handle: { pluginId: 'mcp', capabilityId: serviceId }, state: 'ready', descriptor: {
+        id: serviceId, title: serviceId, source: { serviceId }, inputSchema: { type: 'object' }, effects: ['network.read']
+      }
+    })) }),
+    invoke: async handle => { invoked.push(handle.capabilityId); return { invocationId: 'call-1', state: 'running' }; },
+    getInvocation: async () => ({ state: 'succeeded', result: { ok: true } }),
+    subscribe: () => () => {}, cancel: async () => {}
+  };
+  const full = await new CapabilityGateway({ capabilities }).start();
+  t.after(() => full.close());
+  const excluded = full.tools[1];
+  const selected = await new CapabilityGateway({ capabilities, onInvocation: () => {},
+    selection: { mode: 'selected', services: [{ pluginId: 'mcp', serviceId: 'allowed' }] } }).start();
+  t.after(() => selected.close());
+  const tools = (await selected.dispatch({ method: 'tools/list' })).tools;
+  assert.equal(tools.length, 1);
+  assert.equal((await selected.dispatch({ method: 'tools/call', params: { name: tools[0].name, arguments: {} } })).isError, false);
+  assert.equal((await selected.dispatch({ method: 'tools/call', params: { name: excluded.name, arguments: {} } })).isError, true);
+  assert.deepEqual(invoked, ['allowed']);
+});
+
+test('fully authorized background plans expose computer and document tools', async t => {
+  const capabilities = { discover: async () => ({ providers: ['workspace.read', 'filesystem.write'].map(effect => ({
+    handle: { pluginId: 'provider', capabilityId: effect }, state: 'ready', descriptor: {
+      id: effect, title: effect, inputSchema: { type: 'object' }, effects: [effect]
+    }
+  })) }) };
+  const gateway = await new CapabilityGateway({ capabilities, task: { kind: 'plan', background: { authorizationId: 'lease' } } }).start();
+  t.after(() => gateway.close());
+  assert.deepEqual(gateway.tools.map(tool => tool.title), ['workspace.read', 'filesystem.write']);
+});
+
+
+test('gateway preserves MCP image content so native engines can see screenshots', async t => {
+  const result = { content: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }, { type: 'text', text: 'screen' }] };
+  const capabilities = {
+    discover: async () => ({ providers: [{ handle: { pluginId: 'mcp', capabilityId: 'computer' }, state: 'ready', descriptor: {
+      id: 'computer', title: 'Computer', inputSchema: { type: 'object' }, effects: ['computer.control']
+    } }] }),
+    invoke: async () => ({ invocationId: 'screenshot' }),
+    getInvocation: async () => ({ state: 'succeeded', result })
+  };
+  const gateway = await new CapabilityGateway({ capabilities, onInvocation: () => {} }).start();
+  t.after(() => gateway.close());
+  assert.deepEqual(await gateway.call({ name: gateway.tools[0].name, arguments: {} }), result);
+});

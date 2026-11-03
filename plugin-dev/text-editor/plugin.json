@@ -1,7 +1,7 @@
 {
   "id": "text-editor",
   "name": "文本编辑器",
-  "version": "0.1.7",
+  "version": "0.1.58",
   "apiVersion": 2,
   "dataVersion": 1,
   "type": "application",
@@ -15,10 +15,23 @@
     {
       "id": "editor",
       "title": "文本编辑器",
-      "entry": "dist/renderer/index.html",
+      "entry": "dist/renderer/0.1.57/index.html",
       "contributes": {
         "entries": [
           "text-document"
+        ],
+        "fileExtensions": [
+          "txt",
+          "md",
+          "markdown",
+          "json",
+          "jsonc",
+          "xml",
+          "yaml",
+          "yml",
+          "sql",
+          "puml",
+          "plantuml"
         ]
       }
     }

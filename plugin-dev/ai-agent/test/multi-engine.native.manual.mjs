@@ -38,7 +38,7 @@ try {
       const status = await server.request('mcpServerStatus/list');
       assert.equal(status.data.some(entry => entry.name === 'work_desk' && Object.keys(entry.tools).length === 1), true);
     } else {
-      assert.equal((await manager.account('account/read')).account, null);
+      assert.equal((await manager.account('account/read', {})).account, null);
       const status = await server.request('mcp_status');
       assert.equal(status.mcpServers.some(entry => entry.name === 'work_desk' && entry.status === 'connected'), true);
     }

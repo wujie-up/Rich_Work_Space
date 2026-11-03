@@ -79,7 +79,7 @@ async function install(app, page, path) {
   await page.evaluate(() => workDesk.plugins.install());
 }
 
-test('DeckPg 安装包：菜单计划、资源树、代码审批与审查、完整 SQL、手动同步', { timeout: 180000 }, async t => {
+test('DeskPG 安装包：菜单计划、资源树、代码审批与审查、完整 SQL、手动同步', { timeout: 180000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'deck-menu-e2e-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const packages = await fixtures(root);

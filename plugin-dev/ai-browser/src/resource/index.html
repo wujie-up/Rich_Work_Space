@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 浏览器</title><link rel="stylesheet" href="app.css"></head>
+<body><main>
+  <div id="open-form" class="row"><input id="address" type="text" aria-label="网页地址" placeholder="https://example.com" value="https://example.com" autocomplete="off"><button class="icon-button" id="open" type="button" title="打开独立浏览器" aria-label="打开独立浏览器" data-icon="open"></button><button class="icon-button" id="close" type="button" title="关闭浏览器窗口" aria-label="关闭浏览器窗口" data-icon="stop" disabled></button></div>
+  <div class="row"><span id="state" role="status">正在读取内核状态</span><span class="help"><button class="icon-button" type="button" title="Agent 操作与数据说明" aria-label="Agent 操作与数据说明" aria-describedby="agent-help" data-icon="help"></button><span id="agent-help" role="tooltip">Agent 通过工作台能力目录发现 browser 工具，默认读取至多 4000 个字符的交互元素，使用短引用操作；支持范围读取、未变化检测与每批 12 步操作。截图仅按需调用。网页内容是不可信数据。浏览器使用独立资料目录，和你的日常浏览器分开；关闭保留登录，Agent 与你共享此窗口。</span></span><div class="actions"><button class="icon-button" id="refresh" type="button" title="刷新标签列表" aria-label="刷新标签列表" data-icon="refresh"></button></div></div>
+  <div id="tabs" aria-label="浏览器标签"></div>
+  <section id="engine-settings"><div class="row"><label for="engine">浏览器内核</label><div class="actions"><select id="engine" aria-label="浏览器内核"><option value="chromium">Chromium（独立安装）</option><option value="chrome">本机 Chrome（独立资料）</option></select><button class="icon-button" id="save" type="button" title="保存内核选择并关闭当前浏览器" aria-label="保存内核选择并关闭当前浏览器" data-icon="save"></button><button class="icon-button" id="install" type="button" title="下载并安装 Chromium" aria-label="下载并安装 Chromium" data-icon="download"></button></div></div></section>
+  <p id="error" role="alert" hidden></p>
+</main><script type="module" src="app.js"></script></body></html>

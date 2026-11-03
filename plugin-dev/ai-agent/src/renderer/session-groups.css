@@ -1,0 +1,46 @@
+/* Group navigation owns layout only; controls and popups retain the shared theme. */
+.group-toolbar{justify-content:flex-start;gap:8px}
+.group-workspace{display:grid;grid-template-columns:var(--group-sidebar-width,184px) 12px minmax(0,1fr);align-items:start;min-height:calc(100dvh - 56px)}
+.group-canvas{min-width:0;container:group-canvas/inline-size}
+.session-groups{position:sticky;top:12px;max-height:calc(100dvh - 28px);overflow:auto;min-width:0;padding:4px 8px 12px 0}
+.group-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
+.group-heading>strong{font-size:var(--agent-font-size,14px);white-space:nowrap;flex-shrink:0}
+.session-groups button.group-choice,.session-groups button.group-member{display:flex;align-items:center;gap:8px;width:100%;font-size:var(--agent-font-size,14px);text-align:left;padding:8px;margin:0;border-color:transparent;background:transparent}
+.session-groups .group-choice[aria-current=page]{background:var(--raised);color:var(--accent)}
+.group-choice-row{display:flex;align-items:center;min-width:0}
+.session-groups .group-choice-row>.icon-button{width:24px;flex-shrink:0;padding:4px;margin:0}
+.session-groups .group-choice-row>.group-choice{min-width:0;flex:1}
+.group-choice>span,.group-member>span:not(.session-status){flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.group-choice small,.group-member small{color:var(--muted);font-size:max(10px,calc(var(--agent-font-size,14px) - 2px));font-weight:400}
+.group-choice>.group-collaboration-mark{width:16px;height:16px;flex-shrink:0}
+.group-members{padding:4px 0 12px 8px}
+.session-groups button.group-member{padding:7px 4px;font-size:var(--agent-font-size,14px)}
+.session-groups .group-member>.session-status{width:26px;height:22px}
+/* Sidebar states stay readable without adding motion beside every member. */
+.group-member>.session-status svg *{animation:none!important}
+.group-basics{display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:16px}
+.group-member-field{display:grid;grid-template-columns:minmax(100px,1.2fr) minmax(100px,1fr) minmax(100px,1fr);gap:12px}
+.group-member-field.with-role{grid-template-columns:minmax(100px,1.2fr) repeat(3,minmax(100px,1fr))}
+@media(max-width:700px){.session-groups{padding-right:6px}.group-member small{display:none}.group-member-field,.group-member-field.with-role{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.group-member-field>.field:last-child{grid-column:1/-1}.group-member-field.with-role>.field:last-child{grid-column:auto}}
+@media(max-width:420px){.group-heading>strong{font-size:var(--agent-font-size,14px)}.session-groups button.group-choice{padding:7px 4px}}
+/* Keep the centered status clear when the sidebar leaves only a narrow session canvas. */
+@container group-canvas (max-width:400px){.session-header>.card-actions{min-width:0;max-width:100%;flex-wrap:wrap;justify-content:flex-end}.session.collapsed{height:auto!important}}
+#workspace:has(.session.maximized) :is(.session-groups,.group-resizer){visibility:hidden}
+
+.group-workspace.groups-hidden{grid-template-columns:minmax(0,1fr)}
+.group-resizer{position:sticky;top:12px;height:calc(100dvh - 68px);cursor:col-resize;touch-action:none;user-select:none}
+.group-resizer::after{content:"";position:absolute;inset:0 auto 0 5px;width:1px;background:var(--desk-control-border)}
+.group-resizer:is(:hover,:focus-visible)::after,.groups-resizing>.group-resizer::after{width:2px;background:var(--desk-control-focus)}
+.group-resizer:focus-visible{outline:1px solid var(--desk-control-focus);outline-offset:-2px}
+.groups-resizing{user-select:none}
+.groups-resizing .group-canvas{pointer-events:none}
+
+.group-context-menu{position:fixed;inset:auto;margin:0;box-sizing:border-box;width:160px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow:auto}
+.group-context-menu>.icon-button{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;margin:0;padding:8px;text-align:left}
+.group-context-menu>.icon-button svg{width:16px;height:16px;flex-shrink:0}
+
+.member-context-menu{width:max-content}
+
+.group-collaboration{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:4px 0 16px}
+
+.group-member-field>.group-member-directory,.group-member-field.with-role>.group-member-directory{grid-column:1/-1}

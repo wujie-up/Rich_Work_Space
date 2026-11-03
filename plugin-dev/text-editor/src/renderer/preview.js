@@ -30,8 +30,9 @@ async function plantuml(source, dark) {
   const lines = source.includes('@start') ? source : `@startuml\n${source}\n@enduml`;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(Error('PlantUML 渲染超时，请简化图形')), 15000);
+    // SVGs scale and scroll in both viewers; pixel dimensions alone must not reject long diagrams.
     engine.renderToString(lines.split(/\r?\n/), svg => { clearTimeout(timer); resolve(svg); },
-      error => { clearTimeout(timer); reject(Error(String(error))); }, { dark, maxSvgSize: 4096 });
+      error => { clearTimeout(timer); reject(Error(String(error))); }, { dark, maxSvgSize: 0 });
   });
 }
 
@@ -49,11 +50,17 @@ async function diagram(language, source) {
   return (await engine.render(`diagram-${++diagramId}`, source)).svg;
 }
 
-export async function renderPreview(container, text, type, current = () => true) {
-  const diagrams = [];
+// Outline labels and preview headings must interpret inline content in the same safe way.
+export function createMarkdownRenderer() {
   const renderer = new marked.Renderer();
   renderer.html = token => escape(token.text);
   renderer.image = token => escape(token.text || '图片');
+  return renderer;
+}
+
+export async function renderPreview(container, text, type, current = () => true) {
+  const diagrams = [];
+  const renderer = createMarkdownRenderer();
   renderer.code = token => {
     const language = (token.lang || '').trim().toLowerCase();
     if (!['mermaid', 'plantuml', 'puml'].includes(language)) { return `<pre><code>${escape(token.text)}</code></pre>`; }
@@ -67,6 +74,7 @@ export async function renderPreview(container, text, type, current = () => true)
   if (!current()) { return; }
   container.innerHTML = html;
   container.querySelectorAll('a').forEach(link => { link.removeAttribute('href'); });
+  container.dispatchEvent(new Event('preview-render'));
   // Sequential rendering avoids races in shared diagram engines and keeps source order stable.
   for (const [index, entry] of diagrams.entries()) {
     if (!current()) { return; }
@@ -77,10 +85,16 @@ export async function renderPreview(container, text, type, current = () => true)
       target.innerHTML = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true },
         FORBID_TAGS: ['foreignObject', 'image', 'a'], FORBID_ATTR: ['href', 'xlink:href'] });
       target.dataset.rendered = entry.language;
+      target.tabIndex = 0;
+      target.setAttribute('role', 'button');
+      target.setAttribute('aria-haspopup', 'dialog');
+      target.setAttribute('aria-label', `${entry.language} 绘图，放大查看`);
+      target.title = '点击放大查看';
     } catch (error) {
       if (!current()) { return; }
       target.textContent = `${entry.language}：${error.message}`;
       target.classList.add('diagram-error');
     }
+    container.dispatchEvent(new Event('preview-render'));
   }
 }

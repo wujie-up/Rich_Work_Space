@@ -1,9 +1,10 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { rm, readdir, readFile } from 'node:fs/promises';
+import { rm, readdir, readFile, rename, mkdir } from 'node:fs/promises';
 import { fail, pluginId } from '../../shared/contracts.js';
 import { importPackage, inspectPackage, withPackageSource } from './plugin-package.js';
 import { PluginRuntime } from './plugin-runtime.js';
+import { PluginChannels } from './plugin-channels.js';
 import { Capabilities } from './capabilities.js';
 import { pluginProperties, validatePresentation } from './plugin-manifest.js';
 
@@ -19,15 +20,44 @@ export class Plugins {
     this.recovering = new Map();
     this.activating = new Map();
     this.taskCalls = new Map();
-    this.capabilities = new Capabilities({ storage, loaded: this.loaded, emit, usable: id => {
+    this.channels = new PluginChannels({ storage, usable: source => {
+      const record = this.records.get(source.id);
+      return !this.quitting && this.loaded.get(source.id) === source && record?.state === 'enabled'
+        && !record.operation && !this.operations.has(source.id);
+    } });
+    this.capabilities = new Capabilities({ storage, loaded: this.loaded, emit,
+      acquireResource: (runtime, key) => this.acquireResource(runtime, key, true), usable: id => {
       const record = this.records.get(id);
       return !this.quitting && record?.state === 'enabled' && !record.operation && !this.operations.has(id);
     } });
   }
 
   list() {
-    return [...this.records.values()].map((record) => ({ ...record, running: Boolean(this.loaded.get(record.id) && !this.loaded.get(record.id).closed),
+    return [...this.records.values()].map((record) => ({ ...record, autoStart: record.autoStart === true,
+      singleInstance: record.multipleWindows === undefined ? record.singleInstance : !record.multipleWindows,
+      running: Boolean(this.loaded.get(record.id) && !this.loaded.get(record.id).closed),
       views: this.loaded.get(record.id)?.views?.length ? this.loaded.get(record.id).views : record.views || [] }));
+  }
+
+  // Window policy is host metadata; changing it never restarts a plugin or discards its retained views.
+  async setMultipleWindows(id, allowed) {
+    if (typeof allowed !== 'boolean') {
+      throw fail('INVALID_ARGUMENT', '多开设置必须是布尔值');
+    }
+    const record = this.record(id);
+    record.multipleWindows = allowed;
+    await this.persist();
+    console.info('[plugin:window-policy]', { pluginId: id, multipleWindows: allowed });
+  }
+
+  // Auto-opening a view is separate from loading its background service.
+  async setAutoStart(id, enabled) {
+    if (typeof enabled !== 'boolean') {
+      throw fail('INVALID_ARGUMENT', '自动启动设置必须是布尔值');
+    }
+    this.record(id).autoStart = enabled;
+    await this.persist();
+    console.info('[plugin:auto-start]', { pluginId: id, autoStart: enabled });
   }
 
   async persist() {
@@ -35,7 +65,7 @@ export class Plugins {
     this.emit('plugins.changed', this.list());
   }
 
-  async load() {
+  async load({ deferServices = false } = {}) {
     await this.capabilities.load();
     const records = await this.storage.readJson('plugins.json', null);
     for (const record of records || []) {
@@ -67,7 +97,7 @@ export class Plugins {
       if (record.state !== 'uninstalled' && !await this.validateInstalled(record)) {
         continue;
       }
-      if (!this.loaded.has(record.id) && record.state === 'enabled' && record.loadOnStartup && record.background === 'service') {
+      if (!deferServices && !this.loaded.has(record.id) && record.state === 'enabled' && record.loadOnStartup && record.background === 'service') {
         try {
           await this.activate(record.id);
         } catch (error) {
@@ -77,6 +107,25 @@ export class Plugins {
       }
     }
     await this.persist();
+  }
+
+  // Share activation with early user clicks; a slow service must not delay another service or the desktop.
+  async startServices() {
+    await Promise.all([...this.records.values()].map(async record => {
+      if (this.quitting || this.operations.has(record.id) || record.operation
+        || record.state !== 'enabled' || !record.loadOnStartup || record.background !== 'service') {
+        return;
+      }
+      const started = performance.now();
+      try {
+        await this.ensureRuntime(record.id);
+        await this.persist();
+      } catch (error) {
+        console.error('[plugin:startup]', { pluginId: record.id, stack: error.stack });
+      } finally {
+        console.info('[plugin:startup-finished]', { pluginId: record.id, elapsedMs: Math.round(performance.now() - started) });
+      }
+    }));
   }
 
   // Scan only installation directories; one malformed plugin must not prevent the desk from starting.
@@ -101,7 +150,7 @@ export class Plugins {
           throw fail('INVALID_PACKAGE', '插件待清理或数据版本不兼容');
         }
         this.records.set(manifest.id, { operation: null, lastError: null,
-          ...previous, ...manifest, state: previous?.state === 'disabled' ? 'disabled' : 'enabled' });
+          ...previous, ...manifest, autoStart: previous?.autoStart === true, state: previous?.state === 'enabled' ? 'enabled' : 'disabled' });
       } catch (error) {
         const record = this.records.get(entry.name);
         if (record) {
@@ -182,6 +231,9 @@ export class Plugins {
     if (!registered) {
       throw fail('METHOD_NOT_FOUND', '插件方法不存在');
     }
+    if (registered.nativeOnly && (context?.origin !== 'native' || context.chain?.length !== 1 || context.chain[0] !== id)) {
+      throw fail('NATIVE_ONLY', '此操作仅允许在本机工作台执行');
+    }
     const call = () => this.invokeResource(id, runtime, registered, args, context);
     return registered.exclusive ? this.guard(id, call) : call();
   }
@@ -234,6 +286,7 @@ export class Plugins {
         await runtime.call('$deactivate');
       } finally {
         this.capabilities.revoke(runtime);
+        void this.channels.revoke(runtime);
         await runtime.close();
         this.loaded.delete(id);
       }
@@ -258,35 +311,122 @@ export class Plugins {
     if (!key) {
       return runtime.call(method.name, args, context);
     }
-    const locks = this.resourceLocks.get(key) || new Set();
-    const exclusive = method.resourceExclusive;
-    const participants = [...this.loaded.values(), ...this.recovering.values()];
-    const busy = exclusive && participants.some((peer) => peer.resources.some((resource) => resource.key === key
-      && (peer.closed || resource.busy || resource.busyUntil > Date.now())));
-    if (busy || [...locks].some((lock) => lock.exclusive || exclusive)) {
-      throw fail('RESOURCE_BUSY', '共享工作区有任务忙碌或正在切换，请稍后重试');
-    }
-    const lock = { exclusive };
-    locks.add(lock);
-    this.resourceLocks.set(key, locks);
+    const release = this.acquireResource(runtime, key, method.resourceExclusive);
     try {
       return await runtime.call(method.name, args, context);
     } finally {
-      try {
-        if (runtime.closed) {
-          await runtime.cleanup;
+      if (runtime.closed) {
+        await runtime.cleanup;
+      }
+      release();
+    }
+  }
+
+  // The same lock set covers short RPCs, capability execution and explicitly retained background work.
+  acquireResource(runtime, key, exclusive, token) {
+    if (typeof key !== 'string' || !key.trim() || key.length > 4096) {
+      throw fail('INVALID_ARGUMENT', '资源标识必须是 1 至 4096 字符的非空字符串');
+    }
+    const locks = this.resourceLocks.get(key) || new Set();
+    const participants = [...this.loaded.values(), ...this.recovering.values()];
+    const busy = exclusive && participants.some(peer => peer.resources.some(resource => resource.key === key
+      && (peer.closed || resource.busy || resource.busyUntil > Date.now())));
+    if (busy || [...locks].some(lock => lock.exclusive || exclusive)) {
+      throw fail('RESOURCE_BUSY', '共享资源有任务忙碌，请稍后重试');
+    }
+    const lock = { runtime, exclusive, token };
+    locks.add(lock);
+    this.resourceLocks.set(key, locks);
+    return () => {
+      locks.delete(lock);
+      if (!locks.size && this.resourceLocks.get(key) === locks) {
+        this.resourceLocks.delete(key);
+      }
+    };
+  }
+
+  // Cleanup runs only after this runtime's registered processes have actually stopped.
+  releaseRuntimeResources(runtime) {
+    for (const [key, locks] of this.resourceLocks) {
+      for (const lock of locks) {
+        if (lock.runtime === runtime) {
+          locks.delete(lock);
         }
-      } finally {
-        locks.delete(lock);
-        if (!locks.size) {
-          this.resourceLocks.delete(key);
-        }
+      }
+      if (!locks.size) {
+        this.resourceLocks.delete(key);
       }
     }
   }
 
+  resourceRequest(message, parent, source) {
+    if (source.closed || this.loaded.get(source.id) !== source) {
+      throw fail('PLUGIN_UNAVAILABLE', '插件运行实例已失效');
+    }
+    if (message.action === 'resources.release') {
+      if (typeof message.input?.token !== 'string' || !message.input.token) {
+        throw fail('INVALID_ARGUMENT', '资源租约标识无效');
+      }
+      for (const [key, locks] of this.resourceLocks) {
+        for (const lock of locks) {
+          if (lock.runtime === source && lock.token === message.input?.token) {
+            locks.delete(lock);
+          }
+        }
+        if (!locks.size) {
+          this.resourceLocks.delete(key);
+        }
+      }
+      return true;
+    }
+    this.assertEnabled(source.id);
+    if (this.quitting || message.action !== 'resources.acquire') {
+      throw fail('PLUGIN_UNAVAILABLE', '资源申请不可用');
+    }
+    if ((message.parentId && !parent) || !Number.isFinite(message.deadline) || message.deadline <= Date.now()
+      || (parent && parent.deadline <= Date.now())) {
+      throw fail('SERVICE_TIMEOUT', '资源申请调用已结束');
+    }
+    const { key, exclusive = false } = message.input || {};
+    if (typeof exclusive !== 'boolean') {
+      throw fail('INVALID_ARGUMENT', '资源独占设置必须是布尔值');
+    }
+    const token = randomUUID();
+    this.acquireResource(source, key, exclusive, token);
+    return token;
+  }
+
   // Only published methods on the current live runtime participate; contracts stay opaque to desk.
   async serviceRequest(message, parent, source) {
+    if (message.action.startsWith('host.transport.')) {
+      // Existing connections must be revoked during quit; opening new transports stays blocked.
+      if (source.closed || this.loaded.get(source.id) !== source || (this.quitting && message.action !== 'host.transport.revoke')) {
+        throw fail('PLUGIN_UNAVAILABLE', '插件运行实例已失效');
+      }
+      if (parent?.lifecycle !== 'stop' && message.action !== 'host.transport.revoke') { this.assertEnabled(source.id); }
+      if (!this.record(source.id).requiredHostFeatures?.includes('desk.service-transport.v1') || !this.transport) {
+        throw fail('SERVICE_UNAVAILABLE', '插件未声明受控服务传输协议');
+      }
+      return this.transport.request(source, message.action.slice('host.transport.'.length), message.input);
+    }
+    if (message.action.startsWith('resources.')) {
+      return this.resourceRequest(message, parent, source);
+    }
+    if (message.action.startsWith('host.channels.')) {
+      return this.channels.request(source, message.action.slice('host.channels.'.length), message.input);
+    }
+    if (message.action.startsWith('host.messages.')) {
+      // Cancellation can finish from an in-flight request's finally block as well as the stop hook.
+      if (source.closed || this.loaded.get(source.id) !== source || (this.quitting && message.action !== 'host.messages.cancel')) {
+        throw fail('PLUGIN_UNAVAILABLE', '插件运行实例已失效');
+      }
+      if (parent?.lifecycle !== 'stop' && message.action !== 'host.messages.cancel') { this.assertEnabled(source.id); }
+      const action = message.action.slice('host.messages.'.length);
+      if (action === 'request') { return this.capabilities.messages.request(source, message.input); }
+      if (action === 'get') { return this.capabilities.messages.get(source, message.input); }
+      if (action === 'cancel') { return this.capabilities.messages.cancel(source, message.input); }
+      throw fail('METHOD_NOT_FOUND', '消息方法不存在');
+    }
     if (message.action === 'host.runtimeDirectory') {
       if (source.closed || this.loaded.get(source.id) !== source) {
         throw fail('PLUGIN_UNAVAILABLE', '插件运行实例已失效');
@@ -347,6 +487,9 @@ export class Plugins {
     if (!current || (message.parentId !== undefined && !parent) || (parent && parent.deadline <= Date.now())) {
       throw fail('CALL_TIMEOUT', '调用上下文已结束');
     }
+    if (action === 'authorize') { return this.capabilities.authorizations.request(source, message.input); }
+    if (action === 'authorization') { return this.capabilities.authorizations.get(source, message.input); }
+    if (action === 'revoke') { return this.capabilities.authorizations.revoke(source, message.input); }
     if (action === 'discover') { return this.capabilities.discover(message.input); }
     if (action === 'get') { return this.capabilities.get(source, message.input); }
     if (action === 'cancel') { return this.capabilities.cancel(source, message.input); }
@@ -361,13 +504,24 @@ export class Plugins {
   async activate(id) {
     const directory = await this.storage.packageDirectory(pluginId(id));
     await inspectPackage(directory);
+    // Unsigned development packages require consent again after activation.
+    const integrity = await readFile(join(directory, 'integrity.json')).catch(error => {
+      if (error.code !== 'ENOENT') { throw error; }
+      return null;
+    });
     if (this.quitting) {
       throw fail('PLUGIN_UNAVAILABLE', '桌面正在退出');
     }
     const runtime = this.runtimeFactory({ id, directory, storage: this.storage,
       serviceRequest: (message, parent, instance) => this.serviceRequest(message, parent, instance),
       emit: (channel, value) => this.emit('plugins.event', { pluginId: id, channel, value }),
+      onCleanup: async instance => {
+        await this.transport?.closeOwner(instance);
+        await this.channels.revoke(instance);
+        await this.releaseRuntimeResources(instance);
+      },
       onFailure: (error, instance) => this.crashed(id, error, instance) });
+    runtime.packageIdentity = integrity ? createHash('sha256').update(integrity).digest('hex') : randomUUID();
     // Track the live process before activation resolves so emergency exit can reap a frozen startup.
     this.recovering.set(id, runtime);
     try {
@@ -403,6 +557,7 @@ export class Plugins {
       return;
     }
     this.capabilities.revoke(runtime);
+    void this.channels.revoke(runtime);
     this.loaded.delete(id);
     this.recovering.set(id, runtime);
     const record = this.record(id);
@@ -443,13 +598,48 @@ export class Plugins {
     return this.run(manifest.id, 'installing', async () => {
       await this.removePackageFiles(manifest.id);
       await importPackage(this.storage, source);
-      const record = { ...manifest, state: 'disabled', operation: 'installing', cleanupPending: false, lastError: null };
+      const record = { ...manifest, autoStart: false, state: 'disabled', operation: 'installing', cleanupPending: false, lastError: null };
       this.records.set(manifest.id, record);
       await this.persist();
-      if (record.background === 'service' && record.loadOnStartup) {
-        await this.activate(manifest.id);
+    });
+  }
+
+  // Validate before stopping anything; the old package remains available for rollback.
+  upgrade(id, source, token) {
+    return withPackageSource(source, async directory => {
+      const manifest = await inspectPackage(directory);
+      const previous = { ...this.record(id) };
+      if (previous.state === 'uninstalled' || previous.cleanupPending || manifest.id !== id
+        || manifest.dataVersion !== previous.dataVersion) {
+        throw fail('INVALID_PACKAGE', '升级包的插件 ID 或数据版本不匹配');
       }
-      record.state = 'enabled';
+      return this.transition(id, 'upgrade', token, async () => {
+        await this.deactivate(id, previous.state);
+        this.emit('plugins.closed', { pluginId: id });
+        const original = await this.storage.packageDirectory(id);
+        await mkdir(await this.storage.path('plugins'), { recursive: true });
+        const backup = await this.storage.path(`plugins/.upgrade-${randomUUID()}`);
+        await rename(original, backup);
+        try {
+          await importPackage(this.storage, directory);
+          this.records.set(id, { ...previous, ...manifest, autoStart: previous.autoStart === true, state: previous.state, operation: 'upgrading', lastError: null });
+          if (previous.state === 'enabled' && manifest.background === 'service' && manifest.loadOnStartup) {
+            await this.activate(id);
+          }
+        } catch (error) {
+          await this.deactivate(id, 'disabled');
+          await rm(await this.storage.path(`plugins/${id}`), { recursive: true, force: true });
+          await rename(backup, original);
+          this.records.set(id, { ...previous, operation: 'upgrading' });
+          if (previous.state === 'enabled' && previous.background === 'service' && previous.loadOnStartup) {
+            await this.activate(id);
+          }
+          console.error('[plugin:upgrade-rollback]', { pluginId: id, version: previous.version, message: error.message });
+          throw error;
+        }
+        await rm(backup, { recursive: true, force: true });
+        console.info('[plugin:upgraded]', { pluginId: id, from: previous.version, to: manifest.version });
+      });
     });
   }
 
@@ -488,7 +678,7 @@ export class Plugins {
 
   async preview(id, action) {
     this.record(id);
-    if (!['close', 'disable', 'remove'].includes(action)) {
+    if (!['close', 'disable', 'remove', 'upgrade'].includes(action)) {
       throw fail('INVALID_ARGUMENT', '操作类型无效');
     }
     this.checkIdle(id);
@@ -547,7 +737,7 @@ export class Plugins {
       if (pending.intent === `force-closing:${state}`) {
         return pending;
       }
-      if (['installing', 'deleting'].includes(this.record(id).operation)) {
+      if (['installing', 'deleting', 'upgrading'].includes(this.record(id).operation)) {
         return Promise.reject(fail('PLUGIN_BUSY', '请等待插件安装或卸载完成'));
       }
       this.record(id).state = state;
@@ -562,6 +752,7 @@ export class Plugins {
           const runtime = instances.get(id);
           if (runtime) {
             this.capabilities.revoke(runtime);
+            void this.channels.revoke(runtime);
             await runtime.close();
             instances.delete(id);
           }
@@ -604,7 +795,7 @@ export class Plugins {
       return current.intent === intent ? current : Promise.reject(fail('PLUGIN_BUSY', '插件正在执行其他操作'));
     }
     this.checkIdle(id);
-    return this.run(id, { remove: 'deleting', disable: 'disabling', close: 'closing' }[action], async () => {
+    return this.run(id, { remove: 'deleting', disable: 'disabling', close: 'closing', upgrade: 'upgrading' }[action], async () => {
       await this.confirm(id, action, token);
       await this.persist();
       const runtime = this.loaded.get(id);
@@ -625,6 +816,7 @@ export class Plugins {
     const registration = this.loaded.get(id);
     if (registration) {
       this.capabilities.revoke(registration);
+      void this.channels.revoke(registration);
       if (!registration.closed) {
         await registration.call('$deactivate');
       }
@@ -712,6 +904,7 @@ export class Plugins {
     this.quitting = true;
     await Promise.allSettled([...new Set([...this.loaded.values(), ...this.recovering.values()])].map(async (runtime) => {
       this.capabilities.revoke(runtime);
+      void this.channels.revoke(runtime);
       console.info('[plugin:force-quit]', { pluginId: runtime.id, pid: runtime.child?.pid });
       await runtime.close();
     }));

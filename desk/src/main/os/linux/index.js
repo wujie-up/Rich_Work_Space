@@ -1,3 +1,4 @@
+export { createFileClipboard } from './file-clipboard.js';
 export { stopProcessGroups } from '../posix/processes.js';
 export const loadLoginPath = async () => null;
 export const windowOptions = {};

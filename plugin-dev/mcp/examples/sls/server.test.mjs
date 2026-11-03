@@ -12,6 +12,7 @@ const config = { endpoint: 'us-west-1.log.aliyuncs.com', project: 'test', logsto
 test('caller targets are advertised and defaults are optional', async t => {
   assert.equal(queryTool.inputSchema.properties.project.type, 'string');
   assert.equal(queryTool.inputSchema.properties.logstore.type, 'string');
+  assert.equal(queryTool.inputSchema.properties.region?.type, 'string');
   const configured = configuration({ SLS_ENDPOINT: config.endpoint,
     ALIBABA_CLOUD_ACCESS_KEY_ID: config.accessKeyId, ALIBABA_CLOUD_ACCESS_KEY_SECRET: config.accessKeySecret });
   const client = new SlsClient(configured);
@@ -24,6 +25,40 @@ test('caller targets are advertised and defaults are optional', async t => {
   for (const logstore of ['', '../app', 'app?x=1', null, 123]) {
     await assert.rejects(client.query({ term: 'x', project: 'ai-ve', logstore }), /Logstore/);
   }
+});
+test('invalid regions fail before any request and leave the configured target unchanged', async t => {
+  const client = new SlsClient(config);
+  t.after(() => client.close());
+  let requests = 0;
+  client.request = async () => { requests++; throw new Error('unexpected network'); };
+  for (const region of ['', null, 123, 'https://cn-hongkong', 'cn-hongkong.log.aliyuncs.com',
+    'cn-hongkong.evil.example', 'cn-hongkong/path', 'cn-hongkong:443']) {
+    await assert.rejects(client.query({ term: 'x', region }), /地域/);
+  }
+  assert.equal(requests, 0);
+  assert.equal(client.config.endpoint, config.endpoint);
+});
+test('regional retries keep the same endpoint and fixed query bounds', async t => {
+  const client = new SlsClient(config);
+  t.after(() => client.close());
+  const calls = [];
+  client.request = async (resource, params, project, endpoint) => {
+    calls.push({ resource, params, project, endpoint });
+    if (calls.length === 1) { throw Object.assign(new Error('reset'), { code: 'ECONNRESET' }); }
+    return { status: 200, headers: { 'x-log-progress': calls.length === 2 ? 'Incomplete' : 'Complete' }, body: '[]' };
+  };
+  const result = await client.query({ term: 'x', region: 'cn-hongkong', project: 'ai-saas', logstore: 'admin', from: 100, to: 200 });
+  assert.equal(result.progress, 'Complete');
+  assert.equal(result.endpoint, 'cn-hongkong.log.aliyuncs.com');
+  assert.equal(calls.length, 3);
+  for (const call of calls) {
+    assert.equal(call.endpoint, 'cn-hongkong.log.aliyuncs.com');
+    assert.equal(call.project, 'ai-saas');
+    assert.equal(call.resource, '/logstores/admin');
+    assert.equal(call.params.from, '100');
+    assert.equal(call.params.to, '200');
+  }
+  assert.equal(client.config.endpoint, config.endpoint);
 });
 test('query bounds, timezone, literal search, fixed pagination and SQL limits', () => {
   assert.equal(queryParameters({ term: 'a"b', from: 100, to: 200 }).query, '"a\\"b"');
@@ -99,5 +134,21 @@ test('HTTPS query retries Incomplete, reuses connections, and suppresses upstrea
   const fallback = await client.query({ term: 'default', from: 100, to: 200 });
   assert.equal(fallback.project, config.project);
   assert.equal(fallback.logstore, config.logstore);
+  assert.equal(targets.at(-1).host, `test.${config.endpoint}:${server.address().port}`);
+  const crossRegion = await Promise.all([
+    client.query({ term: 'saas-error', region: 'cn-hongkong', project: 'ai-saas', logstore: 'admin', from: 100, to: 200 }),
+    client.query({ term: 'old-order', project: 'ai-br', logstore: 'app', from: 100, to: 200 }),
+    client.query({ term: 'saas-error', region: 'cn-hongkong', project: 'ai-saas', logstore: 'admin', from: 100, to: 200 })
+  ]);
+  assert.deepEqual(crossRegion.map(({ endpoint }) => endpoint), [
+    'cn-hongkong.log.aliyuncs.com', config.endpoint, 'cn-hongkong.log.aliyuncs.com'
+  ]);
+  assert.deepEqual(targets.slice(-3).map(({ host, path }) => `${host}${path}`).sort(), [
+    `ai-saas.cn-hongkong.log.aliyuncs.com:${server.address().port}/logstores/admin`,
+    `ai-br.${config.endpoint}:${server.address().port}/logstores/app`,
+    `ai-saas.cn-hongkong.log.aliyuncs.com:${server.address().port}/logstores/admin`
+  ].sort());
+  const after = await client.query({ term: 'default-after-regions', from: 100, to: 200 });
+  assert.equal(after.endpoint, config.endpoint);
   assert.equal(targets.at(-1).host, `test.${config.endpoint}:${server.address().port}`);
 });

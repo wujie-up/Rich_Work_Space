@@ -70,7 +70,7 @@ async function install(app, page, path) {
   await page.evaluate(() => workDesk.plugins.install());
 }
 
-test('最新 DeckPg：消息节点分类、连接配置、事件队列、多窗口观察和最后窗口停止', { timeout: 180000 }, async t => {
+test('最新 DeskPG：消息节点分类、连接配置、事件队列、多窗口观察和最后窗口停止', { timeout: 180000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'deck-messages-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const archive = await fixture(root);
@@ -213,7 +213,7 @@ export async function activate(context) {
   return archive;
 }
 
-test('最新 DeckPg：消息 Agent 后台轮询、多窗口不重复启动、人工回答和停止协调', { timeout: 90000 }, async t => {
+test('最新 DeskPG：消息 Agent 后台轮询、多窗口不重复启动、人工回答和停止协调', { timeout: 90000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'deck-message-agent-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const workflowPackage = await fixture(root);

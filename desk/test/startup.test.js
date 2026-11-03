@@ -28,3 +28,15 @@ test('mac packaged copies relocate into Applications and stop startup until rela
   app.moveToApplicationsFolder = () => false;
   await assert.rejects(ensureInstallation(app, async () => {}), /安装/);
 });
+
+test('installed app starts before the deferred application-entry check completes', async () => {
+  let checked = false;
+  let finish;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const app = { isPackaged: true, isInApplicationsFolder: () => true };
+  assert.equal(await ensureInstallation(app, async () => { checked = true; await pending; }), true);
+  assert.equal(checked, false);
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  assert.equal(checked, true);
+  finish();
+});

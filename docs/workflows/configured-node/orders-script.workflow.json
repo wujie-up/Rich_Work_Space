@@ -1,0 +1,120 @@
+{
+  "format": "deckpg.workflow",
+  "version": 1,
+  "workflow": {
+    "name": "[测试] 通用节点 · JS与Python模拟订单复核",
+    "group": "通用节点测试",
+    "trigger": {
+      "mode": "manual",
+      "enabled": false
+    },
+    "nodes": [
+      {
+        "id": "start",
+        "type": "flow.start",
+        "title": "手动测试开始",
+        "params": {},
+        "x": 80,
+        "y": 120,
+        "width": 270,
+        "height": 130
+      },
+      {
+        "id": "source",
+        "type": "text.input",
+        "title": "模拟订单（不查询数据库）",
+        "params": {
+          "format": "json",
+          "content": "[{\"applicationId\":\"9007199254740993\",\"country\":\"AR\",\"channel\":\"模拟渠道A\",\"createdAt\":\"2026-11-03 08:00:00\",\"status\":2,\"merchant\":\"fixture-M1\"},{\"applicationId\":\"102\",\"country\":\"CO\",\"channel\":\"模拟渠道A\",\"createdAt\":\"2026-11-03 08:30:00\",\"status\":2,\"merchant\":\"fixture-M2\"},{\"applicationId\":\"103\",\"country\":\"AR\",\"channel\":\"模拟渠道B\",\"createdAt\":\"2026-11-03 09:00:00\",\"status\":1,\"merchant\":\"fixture-M3\"}]"
+        },
+        "x": 410,
+        "y": 120,
+        "width": 270,
+        "height": 130
+      },
+      {
+        "id": "js",
+        "type": "custom.configured",
+        "title": "JS按状态筛选",
+        "params": {
+          "mode": "script",
+          "language": "javascript",
+          "input": "{{source.value}}",
+          "config": "{\"status\":2}",
+          "code": "console.log(\"literal: {{source.value}}\");\nconsole.log(\"模拟订单筛选完成\");\nreturn input.filter(row => row.status === params.status);",
+          "timeoutSeconds": 10
+        },
+        "x": 740,
+        "y": 120,
+        "width": 270,
+        "height": 130
+      },
+      {
+        "id": "python",
+        "type": "custom.configured",
+        "title": "Python整理订单字段",
+        "params": {
+          "mode": "script",
+          "language": "python",
+          "pythonExecutable": "",
+          "input": "{{js.value}}",
+          "config": "{}",
+          "code": "print(\"模拟订单字段整理完成\")\nreturn [{\"applicationId\": row[\"applicationId\"], \"country\": row[\"country\"], \"channel\": row[\"channel\"], \"createdAt\": row[\"createdAt\"], \"merchant\": row[\"merchant\"]} for row in input]",
+          "timeoutSeconds": 10
+        },
+        "x": 1070,
+        "y": 120,
+        "width": 270,
+        "height": 130
+      },
+      {
+        "id": "report",
+        "type": "custom.configured",
+        "title": "配置渠道国家分组及三列报告",
+        "params": {
+          "mode": "report",
+          "input": "{{python.value}}",
+          "config": "{\"title\":\"模拟订单复核（测试数据）\",\"groupBy\":[{\"field\":\"channel\",\"label\":\"渠道\"},{\"field\":\"country\",\"label\":\"国家\"}],\"columns\":[{\"field\":\"applicationId\",\"label\":\"老系统申请单ID\"},{\"field\":\"createdAt\",\"label\":\"创建时间\"},{\"field\":\"merchant\",\"label\":\"渠道订单号\"}]}"
+        },
+        "x": 1400,
+        "y": 120,
+        "width": 270,
+        "height": 130
+      },
+      {
+        "id": "end",
+        "type": "flow.end",
+        "title": "查看模拟报告",
+        "params": {
+          "input": "{{report.value}}"
+        },
+        "x": 1730,
+        "y": 120,
+        "width": 270,
+        "height": 130
+      }
+    ],
+    "edges": [
+      {
+        "from": "start",
+        "to": "source"
+      },
+      {
+        "from": "source",
+        "to": "js"
+      },
+      {
+        "from": "js",
+        "to": "python"
+      },
+      {
+        "from": "python",
+        "to": "report"
+      },
+      {
+        "from": "report",
+        "to": "end"
+      }
+    ]
+  }
+}

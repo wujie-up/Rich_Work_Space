@@ -1,0 +1,30 @@
+{
+  "id": "pingcode",
+  "name": "PingCode 任务",
+  "version": "0.4.3",
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "type": "application",
+  "showIcon": true,
+  "singleInstance": true,
+  "loadOnStartup": false,
+  "background": "service",
+  "requiredHostFeatures": [
+    "desk.settings.v1"
+  ],
+  "main": "dist/main/index.js",
+  "icon": "ico/icon.svg",
+  "author": "Work Desk",
+  "description": "网页登录后查询指定人员的任务并汇总价值分，也支持 OpenAPI。",
+  "closeDescription": "取消查询并断开浏览器连接；独立登录窗口会关闭，配置及登录资料保留。",
+  "settings": {
+    "entry": "dist/renderer/settings.html"
+  },
+  "views": [
+    {
+      "id": "main",
+      "title": "PingCode 任务",
+      "entry": "dist/renderer/index.html"
+    }
+  ]
+}

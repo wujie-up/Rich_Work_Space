@@ -1,0 +1,22 @@
+{
+  "id": "ai-browser",
+  "name": "AI 浏览器",
+  "version": "0.1.2",
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "type": "application",
+  "showIcon": true,
+  "singleInstance": true,
+  "loadOnStartup": true,
+  "background": "service",
+  "requiredHostFeatures": ["desk.capabilities.v1", "desk.settings.v1"],
+  "main": "dist/main/index.js",
+  "renderer": "src/renderer/app.js",
+  "icon": "ico/icon.svg",
+  "author": "Work Desk",
+  "description": "独立 Chromium 浏览器窗口，为 Agent 提供精简页面快照、元素引用及批量原生操作。",
+  "closeDescription": "关闭本插件的浏览器窗口并停止内核安装，保留独立浏览器资料、登录状态与设置；已执行的网页操作不会撤销。",
+  "settings": { "entry": "dist/renderer/settings.html" },
+  "views": [{ "id": "main", "title": "AI 浏览器", "entry": "dist/renderer/index.html",
+    "contributes": { "entries": ["browser-document"] } }]
+}

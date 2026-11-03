@@ -1,6 +1,6 @@
 :root { color-scheme: light dark; font: 13px system-ui, sans-serif; --bg: #f7f7f7; --fg: #171717; --muted: #666; --border: #ddd; --selected: #eee; }
-:root[data-theme="dark"] { --bg: #181818; --fg: #eee; --muted: #aaa; --border: #444; --selected: #333; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #181818; --fg: #eee; --muted: #aaa; --border: #444; --selected: #333; } }
+:root[data-theme="dark"] { --bg: #181818; --fg: #adb0b7; --muted: #898d96; --border: #444; --selected: #333; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #181818; --fg: #adb0b7; --muted: #898d96; --border: #444; --selected: #333; } }
 * { box-sizing: border-box; }
 html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg); }
 body { display: flex; flex-direction: column; padding: 14px; gap: 10px; }
@@ -24,5 +24,15 @@ aside { min-height: 0; overflow: auto; border-right: 1px solid var(--border); pa
 .detail { display: flex; flex-direction: column; min-height: 0; min-width: 0; padding: 10px; gap: 8px; }
 #selection { overflow-wrap: anywhere; font: 11px ui-monospace, monospace; color: var(--muted); }
 .detailbar label { display: flex; gap: 5px; align-items: center; }
-#output { flex: 1; min-height: 0; overflow: auto; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 ui-monospace, Menlo, monospace; }
+#output { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+#output:not([data-direction="both"]) { grid-template-columns: minmax(0, 1fr); }
+.log-pane { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.log-pane[hidden] { display: none; }
+.log-pane + .log-pane { border-left: 1px solid var(--border); padding-left: 10px; }
+#output[data-direction="response"] .log-pane { border-left: 0; padding-left: 0; }
+.log-pane h2 { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.log-pane pre { flex: 1; min-height: 0; overflow: auto; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 ui-monospace, Menlo, monospace; }
 @media (max-width: 620px) { main { grid-template-columns: 130px minmax(0, 1fr); } body { padding: 8px; } aside, .detail { padding: 7px; } }
+
+button.icon-button{display:inline-flex;align-items:center;justify-content:center;min-width:32px;min-height:32px;padding:6px;border:0;background:transparent;flex-shrink:0}
+button.icon-button>svg{display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}

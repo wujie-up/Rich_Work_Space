@@ -41,7 +41,8 @@ export class LaunchConfig {
     }));
     return groups.flat();
   }
-  async launch({ clientId }) {
+  async launch({ clientId, serverName }) {
+    if (serverName !== undefined && !/^desk_[a-f0-9]{16}$/.test(serverName)) { throw fail('MCP 服务标识无效'); }
     if (!['codex', 'claude'].includes(clientId)) { return { version: 1, overrides: [] }; }
     // Local enabled connections are opt-in at start; old local selections must not block after stop/removal.
     const local = await this.connections();
@@ -53,6 +54,8 @@ export class LaunchConfig {
     const overrides = [];
     const mcpServers = {};
     for (const selection of selected) {
+      const name = `desk_${createHash('sha256').update(`${selection.pluginId}:${selection.serviceId}`).digest('hex').slice(0, 16)}`;
+      if (serverName && name !== serverName) { continue; }
       const provider = providers.find(value => value.pluginId === selection.pluginId);
       if (!provider) { throw fail(`MCP 提供方 ${selection.pluginId} 不可用，请检查 AI 接入选择`); }
       if (!groups.has(provider.pluginId)) {
@@ -63,7 +66,6 @@ export class LaunchConfig {
       if (!service || service.state !== 'running' || !service.url || !service.headers?.Authorization) {
         throw fail(`MCP 服务 ${selection.serviceId} 未就绪，请启动服务或取消选择`);
       }
-      const name = `desk_${createHash('sha256').update(`${provider.pluginId}:${service.id}`).digest('hex').slice(0, 16)}`;
       // Client-specific serialization belongs to the MCP provider, not the AI plugin.
       if (clientId === 'claude') {
         mcpServers[name] = { type: 'http', url: service.url, headers: { Authorization: service.headers.Authorization } };

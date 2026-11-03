@@ -1,0 +1,25 @@
+// One command catalogue keeps the UI and agent's whitelist aligned without exposing shell arguments.
+export const gitActions = {
+  switch: { title: '切换分支', fields: ['branch'] },
+  createBranch: { title: '新建并切换分支', fields: ['newBranch', 'revision'] },
+  renameBranch: { title: '重命名分支', fields: ['branch', 'newBranch'] },
+  deleteBranch: { title: '安全删除分支', fields: ['branch'] },
+  fetch: { title: '获取远程更新', fields: ['remote'] },
+  pull: { title: '拉取更新', fields: ['remote', 'branch', 'localBranch', 'pullMode'] },
+  push: { title: '推送分支并设置跟踪', fields: ['remote', 'localBranch'] },
+  stage: { title: '暂存文件', fields: ['paths', 'all'] },
+  unstage: { title: '取消暂存', fields: ['paths', 'all'] },
+  commit: { title: '提交暂存内容', fields: ['message'] },
+  merge: { title: '合并分支或提交', fields: ['revision'] },
+  rebase: { title: '变基到分支或提交', fields: ['revision'] },
+  cherryPick: { title: '拣选提交', fields: ['revision'] },
+  revert: { title: '撤销提交（新增撤销提交）', fields: ['revision', 'mainline'] },
+  continue: { title: '继续未完成的集成操作', fields: [] },
+  abort: { title: '中止未完成的集成操作', fields: [] },
+  stashSave: { title: '储藏本地修改', fields: ['message', 'includeUntracked'] },
+  stashApply: { title: '应用储藏', fields: ['stash'] },
+  stashPop: { title: '弹出储藏', fields: ['stash'] },
+  stashDrop: { title: '删除储藏', fields: ['stash'], danger: '删除此储藏后无法从储藏列表恢复。' },
+  reset: { title: '重置当前分支', fields: ['revision', 'mode'] },
+  discard: { title: '丢弃已跟踪文件的修改', fields: ['paths'], danger: '选中文件的工作区修改将被永久丢弃。' }
+};

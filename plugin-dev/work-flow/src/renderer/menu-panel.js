@@ -1,3 +1,5 @@
+import { confirmConfigurationDelete } from './configuration-delete.js';
+import { pageLifecycle } from '../../../../desk/src/resource/page-lifecycle.js';
 import { agentRequests } from './agent-requests.js';
 import { chooseDirectory, escape as e, invoke } from './api.js';
 
@@ -7,6 +9,9 @@ const done = state => ['succeeded', 'failed', 'cancelled', 'interrupted'].includ
 const field = (id, label, value = '', type = 'text') => `<label>${e(label)}<input id="${id}" type="${type}" value="${e(value)}" autocomplete="off"></label>`;
 
 export function createMenuPanel(container, onRun, status) {
+  const lifecycle = pageLifecycle();
+  lifecycle.subscribe(visible => { if (visible) { void tick(); } });
+  window.addEventListener('pagehide', () => clearInterval(timer), { once: true });
   let run = null;
   let session = null;
   let selected = '';
@@ -60,7 +65,7 @@ export function createMenuPanel(container, onRun, status) {
       ${(task.diff || []).map(diff => `<details open><summary>${e(diff.file)}</summary><div class="menu-diff">
         <div><small>修改前</small><pre class="output">${e(diff.before ?? '（不存在）')}</pre></div>
         <div><small>修改后</small><pre class="output">${e(diff.after ?? '（删除）')}</pre></div></div></details>`).join('')}
-      ${!done(task.state) ? `<button data-action="stop" data-kind="${kind}">停止 Agent</button>` : ''}
+      ${!done(task.state) ? `<button data-action="stop" data-kind="${kind}" title="停止 Agent" aria-label="停止 Agent" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5h14v14H5z"/></svg></button>` : ''}
       ${agentRequests(task.requests, kind)}</section>`;
   }
   function treeHtml() {
@@ -94,7 +99,7 @@ export function createMenuPanel(container, onRun, status) {
       `<option value="${e(node.key)}" ${draft.parent === node.key ? 'selected' : ''}>${e(node.name)} · ${e(node.system || node.kind)} · ${e(node.code)} · ${e(node.key)}</option>`).join('')}</select></label>
       ${field('draft-path', '路由路径', draft.path)}${field('draft-sort', '排序', draft.sort || 0, 'number')}
       ${draft.appCode ? `<p class="hint">appCode：${e(draft.appCode)}</p>` : ''}
-      <button data-action="save-draft">保存资源修改</button> <button data-action="remove-draft">移除新增资源</button>`;
+      <button data-action="save-draft" title="保存资源修改" aria-label="保存资源修改" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h14l3 3v15H3V3z M7 3v6h10V3 M7 21v-8h10v8"/></svg></button> <button data-action="remove-draft" title="移除新增资源" aria-label="移除新增资源" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18 M9 6V3h6v3 M5 6l1 15h12l1-15 M10 10v7 M14 10v7"/></svg></button>`;
   }
   async function render() {
     const stage = run.pending?.stage || run.pending?.request?.stage;
@@ -107,30 +112,30 @@ export function createMenuPanel(container, onRun, status) {
       body = `<p class="hint">连接 FAT 菜单目录。token 仅用于当前插件进程，不会保存或交给 Agent。</p>
         <div class="menu-fields">${field('menu-token', 'authtoken', '', 'password')}${field('menu-role', 'roleId')}
         ${field('menu-header', 'menuid 请求头（可选）')}${field('menu-tenant', 'SQL tenantId', session.tenant)}</div>
-        <button data-action="load">加载目录</button><p>已加载 ${session.catalog.length} 项 · ${session.connected ? '连接有效' : '需要连接'}</p>
-        ${session.loaded ? `<div class="menu-tree-box">${treeHtml()}</div><button class="primary" data-action="confirm">确认目录，下一步</button>` : ''}`;
+        <button data-action="load" title="加载目录" aria-label="加载目录" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V4h7l2 3h9v13H3z"/></svg></button><p>已加载 ${session.catalog.length} 项 · ${session.connected ? '连接有效' : '需要连接'}</p>
+        ${session.loaded ? `<div class="menu-tree-box">${treeHtml()}</div><button class="icon-button primary" data-action="confirm" title="确认目录，下一步" aria-label="确认目录，下一步"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg></button>` : ''}`;
     } else if (stage === 'tree') {
       body = `<div class="menu-columns"><section><label>自然语言需求<textarea id="menu-text" rows="3"
         placeholder="在###菜单下加入**菜单，在**菜单下加入**按钮">${e(settings.text)}</textarea></label>
         ${agentSettings()}<label>限定目录分支（可选）<select id="menu-parent"><option value="">全部目录</option>${session.catalog
         .filter(node => node.kind !== 'BUTTON').map(node => `<option value="${e(node.key)}" ${settings.parent === node.key ? 'selected' : ''}>
           ${e(node.name)} · ${e(node.code)} · ${e(node.key)}</option>`).join('')}</select></label>
-        <button data-action="plan">调用 Agent 生成草稿</button>${taskHtml('plan')}
+        <button data-action="plan" title="调用 Agent 生成草稿" aria-label="调用 Agent 生成草稿" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 4 12 8-12 8z"/></svg></button>${taskHtml('plan')}
         ${(session.questions || []).length ? `<div class="warning">${session.questions.map(question => `<p>${e(question)}</p>`).join('')}
           <p>补充需求重新规划，或编辑草稿明确内容后再确认。</p></div>` : ''}
         <p class="hint">草稿 ${session.drafts.length} 项 · 修订 ${session.revision}。修改仅作用于本批新增资源。</p>
-        <button data-action="add-draft">手动新增资源</button><div class="menu-tree-box">${treeHtml()}</div></section>
+        <button data-action="add-draft" title="手动新增资源" aria-label="手动新增资源" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14 M5 12h14"/></svg></button><div class="menu-tree-box">${treeHtml()}</div></section>
         <section>${draftHtml()}</section></div>
         ${session.validation ? `<p class="error-text">${e(session.validation)}</p>` : ''}
-        <button data-action="back-load">返回目录</button> <button class="primary" data-action="confirm">确认新增资源树</button>`;
+        <button data-action="back-load" title="返回目录" aria-label="返回目录" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 5-7 7 7 7 M3 12h18"/></svg></button> <button class="icon-button primary" data-action="confirm" title="确认新增资源树" aria-label="确认新增资源树"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg></button>`;
     } else if (stage === 'code') {
       body = `${agentSettings()}<p class="hint">先确认代码修改范围，再启动 Agent；完成后审查文件内容和验证说明。</p>
         <label>允许修改的文件与原因（每行：相对路径 | 原因）<textarea id="menu-scope" rows="4">${e(settings.scope || `${session.registryFile} | 注册新增菜单 appCode`)}</textarea></label>
-        <button data-action="code">确认范围并调用代码 Agent</button>${taskHtml('code')}
+        <button data-action="code" title="确认范围并调用代码 Agent" aria-label="确认范围并调用代码 Agent" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg></button>${taskHtml('code')}
         <label class="menu-check"><input type="checkbox" id="menu-reviewed">我已审查本次代码改动和 Agent 验证说明</label>
-        <button data-action="back-tree">返回资源树</button> <button class="primary" data-action="confirm-code">确认代码结果</button>
+        <button data-action="back-tree" title="返回资源树" aria-label="返回资源树" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 5-7 7 7 7 M3 12h18"/></svg></button> <button class="icon-button primary" data-action="confirm-code" title="确认代码结果" aria-label="确认代码结果"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg></button>
         <label class="menu-check"><input type="checkbox" id="menu-skip">本批不需要 Agent 编写代码，明确跳过</label>
-        <button data-action="skip-code">确认跳过代码步骤</button>`;
+        <button data-action="skip-code" title="确认跳过代码步骤" aria-label="确认跳过代码步骤" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg></button>`;
     } else if (stage === 'sql') {
       body = await sqlHtml(false);
     }
@@ -141,74 +146,83 @@ export function createMenuPanel(container, onRun, status) {
   async function sqlHtml(final) {
     const artifact = await invoke(final ? 'menu.sql' : 'menu.preview', run.id);
     return `<p class="hint">${final ? 'SQL 已生成，请手动执行后再同步机构。' : '核对 SQL，确认时会重新校验来源目录及编码冲突。'}</p>
-      <pre class="menu-sql">${e(artifact.sql)}</pre>${final ? `<button data-action="download">保存完整 SQL</button><p id="menu-export-result" role="status"></p>
+      <pre class="menu-sql">${e(artifact.sql)}</pre>${final ? `<button data-action="download" title="保存完整 SQL" aria-label="保存完整 SQL" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h14l3 3v15H3V3z M7 3v6h10V3 M7 21v-8h10v8"/></svg></button><p id="menu-export-result" role="status"></p>
       <details><summary>执行 SQL 后，手动同步机构</summary>
       <div class="menu-fields">${field('menu-token', '重新连接 authtoken（重开插件时必填）', '', 'password')}
       ${field('menu-role', 'roleId')}${field('menu-header', 'menuid 请求头（可选）')}</div>
-      <button data-action="roots">重新加载来源根菜单</button><label>来源根菜单<select id="menu-root">${roots.length ? roots.map(root => `<option value="${e(root.id)}">${e(root.name)} · ${e(root.id)}</option>`).join('') : '<option value="">请先加载</option>'}</select></label>
+      <button data-action="roots" title="重新加载来源根菜单" aria-label="重新加载来源根菜单" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10a8 8 0 1 0-1 7 M20 4v6h-6"/></svg></button><label>来源根菜单<select id="menu-root">${roots.length ? roots.map(root => `<option value="${e(root.id)}">${e(root.name)} · ${e(root.id)}</option>`).join('') : '<option value="">请先加载</option>'}</select></label>
       <label>目标机构 ID（逗号分隔）<textarea id="menu-institutions" rows="2">${e(settings.institutions)}</textarea></label>
       <label class="menu-check"><input type="checkbox" id="menu-executed">我已手动执行本批 SQL，并确认同步来源和目标机构</label>
-      <button data-action="sync">确认同步机构</button><p id="menu-sync-result" role="status">${e(syncMessage)}</p></details>`
-      : '<button data-action="back-tree">返回资源树</button> <button class="primary" data-action="confirm">确认并输出 SQL</button>'}`;
+      <button data-action="sync" title="确认同步机构" aria-label="确认同步机构" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg></button><p id="menu-sync-result" role="status">${e(syncMessage)}</p></details>`
+      : '<button data-action="back-tree" title="返回资源树" aria-label="返回资源树" class="icon-button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 5-7 7 7 7 M3 12h18"/></svg></button> <button class="icon-button primary" data-action="confirm" title="确认并输出 SQL" aria-label="确认并输出 SQL"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h14l3 3v15H3V3z M7 3v6h10V3 M7 21v-8h10v8"/></svg></button>'}`;
   }
   function bind() {
     for (const button of container.querySelectorAll('[data-tree]')) {
       button.onclick = () => { remember(); selected = button.dataset.tree; render(); };
     }
     for (const button of container.querySelectorAll('[data-action]')) {
-      button.onclick = () => action(async () => {
+      button.onclick = async () => {
         const name = button.dataset.action;
-        if (name === 'load') {
-          session = await invoke('menu.load', { ...input(), connection: connection(), tenant: value('menu-tenant') });
-        } else if (name === 'confirm' || name === 'confirm-code' || name === 'skip-code') {
-          if (name === 'confirm-code' && !container.querySelector('#menu-reviewed').checked) { throw Error('请先勾选代码审查确认'); }
-          if (name === 'skip-code' && !container.querySelector('#menu-skip').checked) { throw Error('请明确勾选跳过代码步骤'); }
-          run = await invoke('menu.confirm', { ...input(), skip: name === 'skip-code', digest: session.codeTask?.digest });
-          onRun(run);
-        } else if (name === 'plan' || name === 'code') {
-          const scope = value('menu-scope').split('\n').filter(line => line.trim()).map(line => {
-            const [file, ...reason] = line.split('|');
-            return { file: file.trim(), reason: reason.join('|').trim() };
-          });
-          session = await invoke(`menu.${name}`, { ...input(), ...settings, ...(name === 'code' ? { scope } : {}) });
-        } else if (name === 'stop') {
-          session = await invoke('menu.stopTask', { ...input(), kind: button.dataset.kind });
-        } else if (name.startsWith('back-')) {
-          run = await invoke('menu.reset', { ...input(), stage: name.slice(5) });
-          onRun(run);
-        } else if (['add-draft', 'save-draft', 'remove-draft'].includes(name)) {
-          let drafts = structuredClone(session.drafts);
-          if (name === 'add-draft') {
-            selected = `d:${crypto.randomUUID()}`;
-            drafts.push({ key: selected, kind: 'MENU', name: '', code: '', parent: settings.parent || session.catalog[0]?.key || '', path: '', sort: 0 });
-          } else if (name === 'remove-draft') {
-            drafts = drafts.filter(draft => draft.key !== selected);
-          } else {
-            Object.assign(drafts.find(draft => draft.key === selected), { kind: value('draft-kind'), name: value('draft-name'),
-              code: value('draft-code'), parent: value('draft-parent'), path: value('draft-path'), sort: Number(value('draft-sort')) });
+        const selectedDraft = selected;
+        if (name === 'remove-draft') {
+          const draft = session.drafts.find(item => item.key === selectedDraft);
+          if (!await confirmConfigurationDelete('移除新增资源', `确认移除新增资源“${draft.name || '未命名资源'}”？`, button)) {
+            return;
           }
-          session = await invoke('menu.edit', { ...input(), drafts });
-        } else if (name === 'download') {
-          const directory = await chooseDirectory();
-          if (directory) {
-            const artifact = await invoke('menu.export', { runId: run.id, directory });
-            container.querySelector('#menu-export-result').textContent = `已保存：${artifact.path}`;
-          }
-          return false;
-        } else if (name === 'roots') {
-          roots = await invoke('menu.roots', { runId: run.id, ...(value('menu-token') ? { connection: connection() } : {}) });
-          container.querySelector('#menu-root').innerHTML = roots.map(root => `<option value="${e(root.id)}">${e(root.name)} · ${e(root.id)}</option>`).join('');
-          return false;
-        } else if (name === 'sync') {
-          await invoke('menu.sync', { runId: run.id, menuId: value('menu-root'), institutions: value('menu-institutions'),
-            sqlExecuted: container.querySelector('#menu-executed').checked });
-          status('机构同步成功。');
-          syncMessage = '同步成功';
-          container.querySelector('#menu-sync-result').textContent = syncMessage;
-          return false;
         }
-        identity = `${run.id}:${run.status}:${run.pending?.stage || ''}`;
-      });
+        return action(async () => {
+          if (name === 'load') {
+            session = await invoke('menu.load', { ...input(), connection: connection(), tenant: value('menu-tenant') });
+          } else if (name === 'confirm' || name === 'confirm-code' || name === 'skip-code') {
+            if (name === 'confirm-code' && !container.querySelector('#menu-reviewed').checked) { throw Error('请先勾选代码审查确认'); }
+            if (name === 'skip-code' && !container.querySelector('#menu-skip').checked) { throw Error('请明确勾选跳过代码步骤'); }
+            run = await invoke('menu.confirm', { ...input(), skip: name === 'skip-code', digest: session.codeTask?.digest });
+            onRun(run);
+          } else if (name === 'plan' || name === 'code') {
+            const scope = value('menu-scope').split('\n').filter(line => line.trim()).map(line => {
+              const [file, ...reason] = line.split('|');
+              return { file: file.trim(), reason: reason.join('|').trim() };
+            });
+            session = await invoke(`menu.${name}`, { ...input(), ...settings, ...(name === 'code' ? { scope } : {}) });
+          } else if (name === 'stop') {
+            session = await invoke('menu.stopTask', { ...input(), kind: button.dataset.kind });
+          } else if (name.startsWith('back-')) {
+            run = await invoke('menu.reset', { ...input(), stage: name.slice(5) });
+            onRun(run);
+          } else if (['add-draft', 'save-draft', 'remove-draft'].includes(name)) {
+            let drafts = structuredClone(session.drafts);
+            if (name === 'add-draft') {
+              selected = `d:${crypto.randomUUID()}`;
+              drafts.push({ key: selected, kind: 'MENU', name: '', code: '', parent: settings.parent || session.catalog[0]?.key || '', path: '', sort: 0 });
+            } else if (name === 'remove-draft') {
+              drafts = drafts.filter(draft => draft.key !== selectedDraft);
+            } else {
+              Object.assign(drafts.find(draft => draft.key === selected), { kind: value('draft-kind'), name: value('draft-name'),
+                code: value('draft-code'), parent: value('draft-parent'), path: value('draft-path'), sort: Number(value('draft-sort')) });
+            }
+            session = await invoke('menu.edit', { ...input(), drafts });
+          } else if (name === 'download') {
+            const directory = await chooseDirectory();
+            if (directory) {
+              const artifact = await invoke('menu.export', { runId: run.id, directory });
+              container.querySelector('#menu-export-result').textContent = `已保存：${artifact.path}`;
+            }
+            return false;
+          } else if (name === 'roots') {
+            roots = await invoke('menu.roots', { runId: run.id, ...(value('menu-token') ? { connection: connection() } : {}) });
+            container.querySelector('#menu-root').innerHTML = roots.map(root => `<option value="${e(root.id)}">${e(root.name)} · ${e(root.id)}</option>`).join('');
+            return false;
+          } else if (name === 'sync') {
+            await invoke('menu.sync', { runId: run.id, menuId: value('menu-root'), institutions: value('menu-institutions'),
+              sqlExecuted: container.querySelector('#menu-executed').checked });
+            status('机构同步成功。');
+            syncMessage = '同步成功';
+            container.querySelector('#menu-sync-result').textContent = syncMessage;
+            return false;
+          }
+          identity = `${run.id}:${run.status}:${run.pending?.stage || ''}`;
+        });
+      };
     }
     for (const button of container.querySelectorAll('[data-approval], [data-answer]')) {
       button.onclick = () => action(async () => {
@@ -222,7 +236,7 @@ export function createMenuPanel(container, onRun, status) {
     }
   }
   async function tick() {
-    if (busy || container.hidden || !session || !run || run.status !== 'waiting') { return; }
+    if (!lifecycle.visible() || busy || container.hidden || !session || !run || run.status !== 'waiting') { return; }
     const kind = run.pending?.stage === 'code' ? 'code' : 'plan';
     const task = session[`${kind}Task`];
     if (!task || done(task.state)) { return; }

@@ -168,7 +168,7 @@ test('failed activation retains an instance whose owned-process cleanup needs re
 test('entry contributions and required host features are negotiated at the manifest boundary', () => {
   const manifest = { type: 'application', showIcon: true, background: 'none',
     views: [{ id: 'conversation', title: 'AI', entry: 'index.html', contributes: { entries: ['global-conversation'] } }],
-    requiredHostFeatures: ['desk.capabilities.v1', 'desk.entries.v1'] };
+    requiredHostFeatures: ['desk.capabilities.v1', 'desk.entries.v1', 'desk.channels.v1'] };
   assert.equal(pluginProperties(manifest).views[0].contributes.entries[0], 'global-conversation');
   assert.equal(pluginProperties({ ...manifest, requiredHostFeatures: ['desk.development.v1'],
     views: [{ ...manifest.views[0], contributes: { entries: ['plugin-development'] } }] }).views[0].contributes.entries[0], 'plugin-development');
@@ -216,4 +216,47 @@ test('shipped plugins explicitly declare their allowed window multiplicity', asy
     assert.equal(manifest.singleInstance, singleInstance, directory);
     assert.equal(pluginProperties(manifest).singleInstance, singleInstance, directory);
   }
+});
+
+
+test('window preference persists independently from the manifest and survives upgrade', async t => {
+  const { directory, plugins, storage } = await source(t, { singleInstance: true });
+  await plugins.install(directory);
+  assert.equal(plugins.list()[0].singleInstance, true);
+  await plugins.setMultipleWindows('test-agent', true);
+  assert.equal(plugins.list()[0].singleInstance, false);
+  assert.equal(plugins.record('test-agent').singleInstance, true);
+  const restored = new Plugins({ storage });
+  await restored.load();
+  assert.equal(restored.list()[0].singleInstance, false);
+  const manifest = JSON.parse(await readFile(join(directory, 'plugin.json'), 'utf8'));
+  await writeFile(join(directory, 'plugin.json'), JSON.stringify({ ...manifest, version: '1.0.1' }));
+  const preview = await plugins.preview('test-agent', 'upgrade');
+  await plugins.upgrade('test-agent', directory, preview.confirmationToken);
+  assert.equal(plugins.list()[0].singleInstance, false);
+  await plugins.setMultipleWindows('test-agent', false);
+  assert.equal(plugins.list()[0].singleInstance, true);
+  await assert.rejects(plugins.setMultipleWindows('test-agent', 'yes'), { code: 'INVALID_ARGUMENT' });
+});
+
+
+test('auto start defaults off, persists across launch and upgrade without enabling the plugin', async t => {
+  const { directory, plugins, storage } = await source(t, {});
+  await plugins.install(directory);
+  assert.equal(plugins.list()[0].autoStart, false);
+  await plugins.setAutoStart('test-agent', true);
+  assert.equal(plugins.list()[0].autoStart, true);
+  assert.equal(plugins.list()[0].state, 'disabled');
+  const restored = new Plugins({ storage });
+  await restored.load();
+  assert.equal(restored.list()[0].autoStart, true);
+  assert.equal(restored.list()[0].running, false);
+  const manifest = JSON.parse(await readFile(join(directory, 'plugin.json'), 'utf8'));
+  await writeFile(join(directory, 'plugin.json'), JSON.stringify({ ...manifest, version: '1.0.1', autoStart: false }));
+  const preview = await plugins.preview('test-agent', 'upgrade');
+  await plugins.upgrade('test-agent', directory, preview.confirmationToken);
+  assert.equal(plugins.list()[0].autoStart, true);
+  await plugins.setAutoStart('test-agent', false);
+  assert.equal(plugins.list()[0].autoStart, false);
+  await assert.rejects(plugins.setAutoStart('test-agent', 'yes'), { code: 'INVALID_ARGUMENT' });
 });

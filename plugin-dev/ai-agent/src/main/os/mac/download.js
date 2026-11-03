@@ -13,10 +13,10 @@ export async function engineNetworkEnvironment() {
   return address ? { HTTPS_PROXY: address, HTTP_PROXY: address, NO_PROXY: '127.0.0.1,localhost,::1' } : {};
 }
 
-export async function downloadEngine(url, destination) {
+export async function downloadEngine(url, destination, { timeoutSeconds = 300 } = {}) {
   const env = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'en_US.UTF-8', ...await engineNetworkEnvironment() };
   const proxy = env.HTTPS_PROXY ? ['--proxy', env.HTTPS_PROXY] : [];
   await execute('/usr/bin/curl', ['--disable', '--fail', '--location', '--silent', '--show-error',
-    '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', '30', '--max-time', '300',
-    ...proxy, '--output', destination, url], { env, timeout: 310000, maxBuffer: 65536 });
+    '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', String(Math.min(30, timeoutSeconds)), '--max-time', String(timeoutSeconds),
+    ...proxy, '--output', destination, url], { env, timeout: (timeoutSeconds + 2) * 1000, maxBuffer: 65536 });
 }

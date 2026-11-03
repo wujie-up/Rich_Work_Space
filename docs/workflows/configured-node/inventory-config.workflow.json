@@ -1,0 +1,95 @@
+{
+  "format": "deckpg.workflow",
+  "version": 1,
+  "workflow": {
+    "name": "[测试] 通用节点 · 纯配置库存巡检",
+    "group": "通用节点测试",
+    "trigger": {
+      "mode": "manual",
+      "enabled": false
+    },
+    "nodes": [
+      {
+        "id": "start",
+        "type": "flow.start",
+        "title": "手动测试开始",
+        "params": {},
+        "x": 80,
+        "y": 120,
+        "width": 270,
+        "height": 130
+      },
+      {
+        "id": "source",
+        "type": "text.input",
+        "title": "模拟库存",
+        "params": {
+          "format": "json",
+          "content": "[{\"sku\":\"SKU-A\",\"warehouse\":\"模拟仓一\",\"stock\":2},{\"sku\":\"SKU-B\",\"warehouse\":\"模拟仓二\",\"stock\":20},{\"sku\":\"SKU-C\",\"warehouse\":\"模拟仓一\",\"stock\":0}]"
+        },
+        "x": 410,
+        "y": 120,
+        "width": 270,
+        "height": 130
+      },
+      {
+        "id": "filter",
+        "type": "custom.configured",
+        "title": "配置筛选库存低于5并排序",
+        "params": {
+          "mode": "transform",
+          "input": "{{source.value}}",
+          "config": "{\"operations\":[{\"op\":\"filter\",\"field\":\"stock\",\"operator\":\"lt\",\"value\":5},{\"op\":\"sort\",\"by\":[{\"field\":\"stock\",\"direction\":\"asc\"}]},{\"op\":\"select\",\"fields\":{\"sku\":\"sku\",\"warehouse\":\"warehouse\",\"stock\":\"stock\"}}]}"
+        },
+        "x": 740,
+        "y": 120,
+        "width": 270,
+        "height": 130
+      },
+      {
+        "id": "report",
+        "type": "custom.configured",
+        "title": "配置库存报告",
+        "params": {
+          "mode": "report",
+          "input": "{{filter.value}}",
+          "config": "{\"title\":\"模拟低库存清单\",\"groupBy\":[{\"field\":\"warehouse\",\"label\":\"仓库\"}],\"columns\":[{\"field\":\"sku\",\"label\":\"商品编号\"},{\"field\":\"stock\",\"label\":\"当前库存\"}]}"
+        },
+        "x": 1070,
+        "y": 120,
+        "width": 270,
+        "height": 130
+      },
+      {
+        "id": "end",
+        "type": "flow.end",
+        "title": "查看模拟报告",
+        "params": {
+          "input": "{{report.value}}"
+        },
+        "x": 1400,
+        "y": 120,
+        "width": 270,
+        "height": 130
+      }
+    ],
+    "edges": [
+      {
+        "from": "start",
+        "to": "source"
+      },
+      {
+        "from": "source",
+        "to": "filter"
+      },
+      {
+        "from": "filter",
+        "to": "report"
+      },
+      {
+        "from": "report",
+        "to": "end"
+      }
+    ]
+  }
+}

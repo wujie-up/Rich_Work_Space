@@ -1,3 +1,4 @@
+import { configuredNodeType } from './configured-node.js';
 import { KIND_TAGS } from '../../shared/node-categories.js';
 import { mkdir, writeFile, appendFile } from 'node:fs/promises';
 import { dirname, isAbsolute } from 'node:path';
@@ -7,6 +8,10 @@ import { agentRequest, agentOutput } from './agent-data.js';
 import { messageTypes } from './message-input.js';
 import { menuTypes } from './menu-workflow.js';
 import { fetchErrorEmails } from './imap.js';
+import { slsTypes } from './sls-monitor.js';
+import { payoutAuditType } from './payout-node.js';
+import { payoutStageTypes } from './payout-stages.js';
+import { feishuOutputType } from './feishu-output.js';
 
 const ERROR_KEYWORDS = 'ERROR,Exception,Failed,FATAL,panic,Traceback,报错,异常,失败';
 
@@ -16,9 +21,13 @@ export { KIND_TAGS };
 export const ROLE_TAGS = { start: '开始', step: '过程', end: '终止' };
 
 // Node types are the only extension point of this version; the canvas renders whatever this registry describes.
-export function createRegistry({ credentials, menus }) {
+export function createRegistry({ credentials, menus, tasks, robots, scripts, logger }) {
   const types = new Map();
-  for (const type of  [...presetTypes({ credentials }), ...messageTypes(), ...(menus ? menuTypes(menus) : [])]) {
+  for (const type of  [...presetTypes({ credentials }), ...messageTypes(), ...slsTypes(), payoutAuditType({ tasks, logger }),
+    ...payoutStageTypes({ tasks, logger }),
+    configuredNodeType({ tasks, scripts, logger }),
+    feishuOutputType({ robots, logger }),
+    ...(menus ? menuTypes(menus) : [])]) {
     types.set(type.type, type);
   }
   return {
@@ -41,7 +50,7 @@ function describe(type) {
 }
 
 function presetTypes({ credentials }) {
-  return [startType(), inputType(), mailType({ credentials }), extractType(), gateType(), ...controlTypes(), agentType(), collectType(),
+  return [startType(), inputType(), userInputType(), mailType({ credentials }), extractType(), gateType(), ...controlTypes(), agentType(), collectType(),
     webhookType(), fileType(), notifyType(), endType()];
 }
 
@@ -72,6 +81,57 @@ function inputType() {
         }
       }
       return { text: content };
+    } };
+}
+
+// Each visit has its own identity so another window or an old dialog cannot answer the next round.
+function userInputType() {
+  return { type: 'flow.user-input', label: '用户介入', summary: '等待用户选择文档、输入文本或确认一个选项，再继续流程。',
+    io: 'transform', kind: 'flow', role: 'step', manual: true, timeoutMs: 5000,
+    params: [
+      { name: 'title', label: '弹窗标题', kind: 'text', default: '需要补充信息' },
+      { name: 'interaction', label: '交互方式', kind: 'select', default: 'text', options: [
+        { value: 'text', label: '手动输入' }, { value: 'file', label: '选择文档' }, { value: 'choice', label: '单选确认' }
+      ] },
+      { name: 'prompt', label: '问题 / 上下文', kind: 'textarea', rows: 5, default: '', placeholder: '{{requirements.output.questions}}' },
+      { name: 'initialValue', label: '输入框默认内容（可选）', kind: 'textarea', rows: 3, default: '', interaction: 'text' },
+      { name: 'options', label: '可选项（每行一个）', kind: 'textarea', rows: 4, default: '确认继续\n返回修改', interaction: 'choice' }
+    ],
+    async prepare(context) {
+      const interaction = context.params.interaction || 'text';
+      if (!['text', 'file', 'choice'].includes(interaction)) {
+        throw fail('INVALID_ARGUMENT', '不支持的用户交互方式');
+      }
+      const options = [...new Set(String(context.value('options') ?? '确认继续\n返回修改').split('\n').map(value => value.trim()).filter(Boolean))];
+      if (interaction === 'choice' && options.length < 2) {
+        throw fail('INVALID_ARGUMENT', '单选确认需要至少两个可选项');
+      }
+      const prompt = context.value('prompt');
+      return { form: { id: crypto.randomUUID(), title: String(context.params.title || '需要补充信息'), interaction,
+        prompt: typeof prompt === 'string' ? prompt : JSON.stringify(prompt ?? ''), initialValue: String(context.value('initialValue') || ''),
+        ...(interaction === 'choice' ? { options } : {}) } };
+    },
+    async confirm(input, context) {
+      if (input.requestId !== context.request.form.id) {
+        throw fail('RUN_INPUT_STALE', '该输入请求已处理，请刷新当前等待步骤');
+      }
+      if (typeof input.text !== 'string' || !input.text.trim()) {
+        throw fail('INVALID_ARGUMENT', '请填写补充内容后再确认');
+      }
+      const { interaction, options } = context.request.form;
+      if (interaction === 'choice' && !options.includes(input.text)) {
+        throw fail('INVALID_ARGUMENT', '请选择当前列表中的一个选项');
+      }
+      if (interaction === 'file') {
+        if (typeof input.file?.name !== 'string' || !input.file.name.trim()
+          || !Number.isFinite(input.file.size) || input.file.size <= 0 || input.file.size > 2 * 1024 * 1024
+          || input.text.length > 2 * 1024 * 1024) {
+          throw fail('INVALID_ARGUMENT', '请选择不超过 2 MB 的文本需求文档');
+        }
+        return { text: input.text, file: { name: input.file.name, size: input.file.size,
+          ...(input.file.url ? { url: input.file.url } : {}) } };
+      }
+      return { text: input.text };
     } };
 }
 

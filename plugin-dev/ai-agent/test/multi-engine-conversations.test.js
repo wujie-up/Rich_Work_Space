@@ -13,7 +13,7 @@ test('engine selection is persisted per conversation even after the default chan
   const claude = await service.create();
   selected = 'codex';
   const codex = await service.create();
-  assert.equal(service.read(claude.id).engineId, 'claude');
+  assert.equal((await service.read(claude.id)).engineId, 'claude');
   assert.equal(claude.protocol, 'claude-stream');
   assert.equal(codex.engineId, 'codex');
   const explicit = await service.create({ engineId: 'claude' });

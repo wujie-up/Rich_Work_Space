@@ -1,0 +1,71 @@
+{
+  "date": "2026-11-03",
+  "status": "implemented_and_verified_pending_user_import_and_schedule_enable",
+  "metabaseSqlAllowlist": {
+    "validatedPayloads": [
+      "01-run-context.mcp.json",
+      "02-financial-first-page.mcp.json",
+      "03-country-ar-verified-example.mcp.json"
+    ],
+    "testCommand": "node --test docs/workflows/payout-callback-audit/queries.test.mjs",
+    "passedTests": 2
+  },
+  "liveReadOnlyChecks": [
+    {
+      "purpose": "financial and channel table columns",
+      "requestId": "75127417-e830-48e4-a5e2-595092ea5025"
+    },
+    {
+      "purpose": "Latin American association columns",
+      "requestId": "4a8c5292-c01a-4520-96dd-57cd1c47d39b"
+    },
+    {
+      "purpose": "financial candidate query with channel-name join",
+      "requestId": "86452bd8-e5bc-4e7f-9b67-25904a3340eb"
+    },
+    {
+      "purpose": "application ID to loan ID association, terminal records excluded",
+      "requestId": "c2e73d81-c2a3-4b5e-8436-607a7c5158ac"
+    },
+    {
+      "purpose": "old-system pending query",
+      "requestId": "14c6586e-e364-4122-a1ce-6b2db901cdd3"
+    },
+    {
+      "purpose": "fixed DB clock and ID watermark",
+      "requestId": "2ba72f28-a8bf-4978-b0df-d697dd924ce3"
+    }
+  ],
+  "unverified": [
+    "User installation and activation of the daily schedule",
+    "Unattended execution at a real 10:00 boundary",
+    "TH schema: no TH candidate in this audit; unknown mapping fails explicitly"
+  ],
+  "productionWrites": false,
+  "pluginSourceChanged": true,
+  "relatedTests": {
+    "passed": 42,
+    "failed": 0,
+    "includes": "SQL allowlist, collector, Markdown, MCP adapter, engine integration, trigger scheduling, transfer, real Chromium controls"
+  },
+  "liveAudit": {
+    "asOf": "2026-11-03 11:56:06",
+    "candidateEvents": 4064,
+    "matchedRows": 16,
+    "sqlQueries": 99,
+    "complete": true,
+    "failures": [],
+    "report": "/Users/wujie/Desktop/放款未回调巡检/放款未回调订单-20261103-115830-900-试运行.md"
+  },
+  "workFlowVersion": "0.5.54",
+  "reportFormat": "Markdown",
+  "build": {
+    "command": "npm run build",
+    "exitCode": 0
+  },
+  "package": {
+    "version": "0.5.54",
+    "path": "plugin-dev/dist/work-flow-0.5.54.plg",
+    "verified": "standard .plg SHA-256 inventory, packaged native node and Beijing daily trigger"
+  }
+}

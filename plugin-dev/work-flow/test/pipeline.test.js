@@ -113,6 +113,108 @@ test('循环达到上限等待人工决定，继续和退出有效，取消不�
   await assert.rejects(engine.decideLoop(canceled.id, 'continue'), { code: 'RUN_NOT_WAITING' });
 });
 
+test('总轮次硬上限不可追加，通过第五轮仍正常退出', async t => {
+  const { engine, calls } = await fixture(t, Array(5).fill('{"passed":false}'));
+  const target = looping(2);
+  target.nodes[2].params.maxTotalIterations = 5;
+  let run = await finishAgents(engine, await settled(engine, (await engine.start(target)).id));
+  assert.equal(run.pending.reason, 'budget');
+  run = await finishAgents(engine, await engine.decideLoop(run.id, 'continue'));
+  run = await finishAgents(engine, await engine.decideLoop(run.id, 'continue'));
+  assert.equal(calls.length, 5);
+  assert.equal(run.pending.reason, 'total-limit');
+  assert.equal(run.pending.canContinue, false);
+  await assert.rejects(engine.decideLoop(run.id, 'continue'), { code: 'LOOP_TOTAL_LIMIT' });
+  assert.equal(calls.length, 5);
+  await engine.decideLoop(run.id, 'exit');
+
+  const passing = await fixture(t, [...Array(4).fill('{"passed":false}'), '{"passed":true}']);
+  target.id = crypto.randomUUID();
+  target.nodes[2].params.maxIterations = 5;
+  const done = await finishAgents(passing.engine, await settled(passing.engine, (await passing.engine.start(target)).id));
+  assert.equal(done.status, 'succeeded');
+  assert.equal(done.iterations.loop, 5);
+});
+
+test('连续两轮无新增关闭问题暂停，重复和重排不算进展，人工调整后可继续', async t => {
+  const results = [['I-1'], ['I-1', 'I-2'], ['I-2', 'I-1', 'I-2'], ['I-1'], ['I-1', 'I-2', 'I-3']];
+  const { engine, calls } = await fixture(t, results.map(resolved => JSON.stringify({ passed: false, resolved })));
+  const target = looping(10);
+  target.nodes[1].params.outputFields = '{"passed":"boolean","resolved":"string[]"}';
+  Object.assign(target.nodes[2].params, { maxTotalIterations: 5, maxStagnantIterations: 2, progressInput: '{{review.output.resolved}}' });
+  let run = await finishAgents(engine, await settled(engine, (await engine.start(target)).id));
+  assert.equal(calls.length, 4);
+  assert.equal(run.pending.reason, 'no-progress');
+  assert.equal(run.pending.canContinue, true);
+  assert.equal(run.iterations.loop, 4);
+  run = await finishAgents(engine, await engine.decideLoop(run.id, 'continue'));
+  assert.equal(run.pending.reason, 'total-limit');
+  assert.equal(calls.length, 5);
+});
+
+test('新关闭问题重置无进展次数，缺少完整评审不冒充零进展', async t => {
+  const { engine } = await fixture(t, [[], [], ['I-1'], [], ['I-1']].map(resolved => JSON.stringify({ passed: false, resolved })));
+  const target = looping(10);
+  target.nodes[1].params.outputFields = '{"passed":"boolean","resolved":"string[]"}';
+  Object.assign(target.nodes[2].params, { maxTotalIterations: 8, maxStagnantIterations: 2, progressInput: '{{review.output.resolved}}' });
+  const run = await finishAgents(engine, await settled(engine, (await engine.start(target)).id));
+  assert.equal(run.iterations.loop, 5);
+  assert.equal(run.pending.reason, 'no-progress');
+
+  const missing = await fixture(t, Array(4).fill('{"passed":false}'));
+  const pendingReview = looping(10);
+  Object.assign(pendingReview.nodes[2].params, { maxTotalIterations: 4, maxStagnantIterations: 2, progressInput: '{{missing.output.resolved}}' });
+  const stopped = await finishAgents(missing.engine, await settled(missing.engine, (await missing.engine.start(pendingReview)).id));
+  assert.equal(stopped.iterations.loop, 4);
+  assert.equal(stopped.pending.reason, 'total-limit');
+});
+
+test('可选循环限制校验范围，启用无进展限制必须提供进展输入', async t => {
+  const { engine } = await fixture(t);
+  for (const params of [{ maxTotalIterations: -1 }, { maxTotalIterations: 101 }, { maxStagnantIterations: 1.5 },
+    { maxStagnantIterations: 2 }]) {
+    const target = looping();
+    Object.assign(target.nodes[2].params, params);
+    await assert.rejects(engine.start(target), { code: 'INVALID_ARGUMENT' });
+  }
+});
+
+test('嵌套循环不会互相清零硬上限，重新进入内层循环体前即暂停', async t => {
+  const { engine, calls } = await fixture(t, Array.from({ length: 12 }, (_, index) => JSON.stringify({ passed: Boolean(index % 2) })));
+  const target = workflow([node('source', 'text.input', { content: '需求' }),
+    node('review', 'agent.review', { input: '{{source.text}}', outputFields: '{"passed":"boolean"}' }),
+    node('inner', 'flow.loop', { input: '{{review.output.passed}}', expected: 'false', maxIterations: 5, maxTotalIterations: 2 }),
+    node('outer', 'flow.loop', { input: 'true', operator: 'not-empty', maxIterations: 5, maxTotalIterations: 2 }),
+    node('done', 'flow.end')], [edge('source', 'review'), edge('review', 'inner'), edge('inner', 'review', 'continue'),
+    edge('inner', 'outer', 'exit'), edge('outer', 'review', 'continue'), edge('outer', 'done', 'exit')]);
+  const run = await finishAgents(engine, await settled(engine, (await engine.start(target)).id));
+  assert.equal(calls.length, 2, '不能先执行超额 Agent 再检查上限');
+  assert.ok(run.pending, JSON.stringify(run));
+  assert.equal(run.pending.nodeId, 'inner');
+  assert.equal(run.pending.reason, 'total-limit');
+  assert.equal(run.iterations.inner, 2);
+  assert.equal(engine.active.get(run.id).loops.outer.iteration, 2);
+  await assert.rejects(engine.decideLoop(run.id, 'continue'), { code: 'LOOP_TOTAL_LIMIT' });
+  assert.equal(calls.length, 2);
+});
+
+test('通过分支绕过循环节点，外层返回仍保留内层已完成轮次', async t => {
+  const { engine, calls } = await fixture(t, ['{"passed":false}', '{"passed":true}', '{"passed":true}']);
+  const target = workflow([node('source', 'text.input', { content: '需求' }),
+    node('review', 'agent.review', { input: '{{source.text}}', outputFields: '{"passed":"boolean"}' }),
+    node('route', 'flow.route', { input: '{{review.output.passed}}', expected: 'true' }),
+    node('inner', 'flow.loop', { input: '{{source.text}}', operator: 'not-empty', maxIterations: 5, maxTotalIterations: 2 }),
+    node('outer', 'flow.loop', { input: '{{source.text}}', operator: 'not-empty', maxIterations: 5, maxTotalIterations: 2 }),
+    node('done', 'flow.end')], [edge('source', 'review'), edge('review', 'route'), edge('route', 'inner', 'false'),
+    edge('route', 'outer', 'true'), edge('inner', 'review', 'continue'), edge('inner', 'outer', 'exit'),
+    edge('outer', 'review', 'continue'), edge('outer', 'done', 'exit')]);
+  const run = await finishAgents(engine, await settled(engine, (await engine.start(target)).id));
+  assert.equal(calls.length, 2);
+  assert.equal(run.pending.nodeId, 'inner');
+  assert.equal(run.pending.reason, 'total-limit');
+  assert.equal(run.iterations.inner, 2);
+});
+
 test('固定输出失败停止下游，显式重试不会重跑已经完成的上游', async t => {
   const { engine, calls } = await fixture(t, ['{"passed":"yes"}', '{"passed":true}']);
   const target = looping();
@@ -125,6 +227,18 @@ test('固定输出失败停止下游，显式重试不会重跑已经完成的�
   assert.equal(run.status, 'succeeded');
   assert.equal(run.nodes.source.startedAt, startedAt);
   assert.ok(calls.every(call => !call.taskKey));
+});
+
+test('硬上限不把同一失败节点的显式重试计为新一轮', async t => {
+  const { engine, calls } = await fixture(t, ['{"passed":"yes"}', '{"passed":true}']);
+  const target = looping();
+  target.nodes[2].params.maxTotalIterations = 1;
+  let run = await finishAgents(engine, await settled(engine, (await engine.start(target)).id));
+  assert.equal(run.status, 'failed');
+  run = await finishAgents(engine, await engine.retry(run.id));
+  assert.equal(run.status, 'succeeded');
+  assert.equal(run.iterations.loop, 1);
+  assert.equal(calls.length, 2);
 });
 
 test('拒绝任意环、无返回路径的循环、缺少分支及无效循环次数', async t => {
@@ -189,4 +303,39 @@ test('代码任务等待状态向界面提供模式，以显示原生批准入�
   [edge('source', 'code')]);
   const run = await settled(engine, (await engine.start(target)).id);
   assert.equal(run.pending.mode, 'code');
+});
+
+
+test('评审需要业务确认时复用需求介入，确认后重跑分析和评审而非技术返工', async t => {
+  const { engine, calls, workflows } = await fixture(t, [
+    '{"ready":false}', '{"ready":true}', '{"route":"clarify"}', '{"ready":true}', '{"route":"develop"}'
+  ]);
+  const target = workflow([node('start', 'flow.start'),
+    node('requirements', 'agent.review', { outputFields: '{"ready":"boolean"}', input: '需求：{{loop.previous.human.text}}' }),
+    node('ready', 'flow.route', { input: '{{requirements.output.ready}}' }),
+    node('review', 'agent.review', { input: '评审需求', outputFields: '{"route":["clarify","develop"]}' }),
+    node('needsInput', 'flow.route', { input: '{{review.output.route}}', expected: 'clarify' }),
+    node('human', 'flow.user-input', { prompt: '{{review.output.route}}' }),
+    node('again', 'flow.loop', { input: '{{human.text}}', operator: 'not-empty', maxIterations: 3 }),
+    node('stop', 'flow.end'), node('code', 'flow.end', { input: '{{review.output.route}}' })
+  ], [edge('start', 'requirements'), edge('requirements', 'ready'), edge('ready', 'review', 'true'), edge('ready', 'human', 'false'),
+    edge('review', 'needsInput'), edge('needsInput', 'human', 'true'), edge('needsInput', 'code', 'false'),
+    edge('human', 'again'), edge('again', 'requirements', 'continue'), edge('again', 'stop', 'exit')]);
+  const saved = await workflows.save(target);
+  let run = await finishAgents(engine, await settled(engine, (await engine.start(saved)).id));
+  assert.equal(run.status, 'waiting', JSON.stringify(run));
+  assert.equal(run.pending.nodeId, 'human');
+  assert.equal(calls.length, 1, '需求不足时不调用评审');
+  run = await engine.complete(run.id, 'human', { requestId: run.pending.form.id, text: '项目目录和对战规则' });
+  run = await finishAgents(engine, run);
+  assert.equal(run.pending.nodeId, 'human');
+  assert.equal(run.pending.form.prompt, 'clarify');
+  assert.equal(calls.length, 3, '评审疑问应等待用户，不能自行反复设计');
+  run = await engine.complete(run.id, 'human', { requestId: run.pending.form.id, text: '替补本回合立即行动' });
+  run = await finishAgents(engine, run);
+  assert.equal(run.status, 'succeeded');
+  assert.equal(run.nodes.code.output.final, 'develop');
+  assert.equal(run.nodes.stop.status, 'skipped');
+  assert.equal(calls.length, 5);
+  assert.match(calls[3].prompt, /替补本回合立即行动/);
 });

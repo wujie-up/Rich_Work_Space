@@ -1,4 +1,6 @@
-const owner = location.hostname;
+import { pluginHostOrigin, pluginIdentity } from '../../../../desk/src/resource/plugin-host.js';
+const hostOrigin = pluginHostOrigin();
+const owner = pluginIdentity();
 const pending = new Map();
 const listeners = new Map();
 let sequence = 0;
@@ -9,10 +11,10 @@ const invoke = (method, ...args) => new Promise((resolve, reject) => {
     reject(Error('桌面连接超时，请重新打开插件'));
   }, 35000);
   pending.set(id, { resolve, reject, timer });
-  window.parent.postMessage({ type: 'desk:invoke', id, method, args }, 'desk-host://desktop');
+  window.parent.postMessage({ type: 'desk:invoke', id, method, args }, hostOrigin);
 });
 window.addEventListener('message', (event) => {
-  if (event.source !== window.parent || event.origin !== 'desk-host://desktop') {
+  if (event.source !== window.parent || event.origin !== hostOrigin) {
     return;
   }
   const message = event.data;
@@ -45,16 +47,19 @@ const subscribe = (channel) => (callback) => {
   return () => callbacks.delete(callback);
 };
 export const api = {
-  sessions: methods('sessions', ['list', 'create', 'write', 'saveImage', 'resize', 'rename', 'archive', 'attach', 'readArchive', 'restore', 'fork',
-    'deleteArchive', 'gitInfo', 'switchBranch']),
-  storage: { ...methods('storage', ['getLayout', 'saveLayout', 'getAdapterConfig', 'saveAdapterConfig']),
+  groups: methods('groups', ['create', 'assign', 'rename', 'delete', 'archive']),
+  sessions: methods('sessions', ['transcript', 'list', 'setTheme', 'create', 'write', 'composer', 'saveImage', 'fileReferences', 'resize', 'rename', 'archive', 'attach', 'attachWindow', 'readArchive', 'restore', 'recover', 'reconnect', 'resetContext', 'fork',
+    'delete', 'deleteArchive', 'updateArchiveDirectory', 'gitInfo', 'refreshGit', 'switchBranch']),
+  storage: { ...methods('storage', ['getLayout', 'saveLayout', 'getAdapterConfig', 'saveAdapterConfig', 'getRoles', 'saveRoles']),
     getPreferences: () => invoke('storage.getPreferences') },
-  host: { getLaunchContext: () => invoke('host.getLaunchContext'), chooseDirectory: () => invoke('host.chooseDirectory'), chooseFile: options => invoke('host.chooseFile', options),
+  host: { getWindowContext: () => invoke('host.getWindowContext'), getLaunchContext: () => invoke('host.getLaunchContext'),
+    listWindows: () => invoke('host.listWindows'),
+    chooseDirectory: options => invoke('host.chooseDirectory', options), chooseFile: options => invoke('host.chooseFile', options),
     openExternal: url => invoke('host.openExternal', url), openView: (entry, context) => invoke('host.openView', entry, context) },
   events: { sessionsChanged: subscribe('sessions.changed'), output: subscribe('sessions.output'), error: subscribe('host.error') }
 };
 export const conversationApi = {
   call: (method, ...args) => invoke('plugin.invoke', method, args),
-  onEvent: subscribe('conversation.event'), onAccount: subscribe('conversation.account')
+  onEvent: subscribe('conversation.event'), onAccount: subscribe('conversation.account'), onAppearance: subscribe('appearance.changed')
 };
 export const adapters = () => invoke('plugin.invoke', 'adapters.list', []);

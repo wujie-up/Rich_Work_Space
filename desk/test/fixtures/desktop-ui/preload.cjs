@@ -1,21 +1,43 @@
-const { contextBridge } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const changed = new Set();
 const closed = new Set();
 
 // This contract stub supplies only launcher metadata; there is no plugin process or business state.
 contextBridge.exposeInMainWorld('workDesk', {
+  desktop: { ...Object.fromEntries(['list', 'create', 'import', 'resolve', 'openExternal', 'rename', 'trash', 'properties', 'copy', 'paste'].map(method =>
+    [method, (...args) => ipcRenderer.invoke('desktop-files', method, ...args)])), pathForFile: file => webUtils.getPathForFile(file) },
   storage: { getPreferences: async () => JSON.parse(localStorage.getItem('test-preferences') || '{"theme":"system","gridSize":24}'),
     savePreferences: async value => localStorage.setItem('test-preferences', JSON.stringify(value)) },
+  messages: {
+    list: async () => JSON.parse(localStorage.getItem('test-messages') || '[]'),
+    respond: async (id, answer) => {
+      localStorage.setItem('test-message-answer', JSON.stringify({ id, answer }));
+      localStorage.removeItem('test-messages');
+    },
+    defer: async () => localStorage.removeItem('test-messages')
+  },
   host: { info: async () => ({ version: 'test' }) },
   plugins: { list: async () => Array.from({ length: 6 }, (_, index) => ({ id: `desktop-probe-${index}`, name: `测试图标${index + 1}`, version: '1.2.3', author: index === 0 ? { name: '测试作者' } : undefined,
     settings: index === 0 && localStorage.getItem('test-settings') ? { entry: 'settings.html' } : undefined, state: localStorage.getItem(`test-plugin-state:${index}`) || 'enabled',
-    singleInstance: Boolean(index === 0 && localStorage.getItem('test-single-instance')),
+    autoStart: localStorage.getItem(`test-auto-start:${index}`) === 'true',
+    singleInstance: localStorage.getItem(`test-multiple:${index}`) === null
+      ? Boolean(index === 0 && localStorage.getItem('test-single-instance'))
+      : localStorage.getItem(`test-multiple:${index}`) === 'false',
     running: Boolean(index === 0 && localStorage.getItem('test-overlays') && !localStorage.getItem('test-overlay-closed')),
     views: [{ id: 'probe', title: '测试图标', entry: 'index.html',
+      ...(index === 0 ? { contributes: { fileExtensions: ['txt', 'md'] } } : {}),
       ...(index === 0 && localStorage.getItem('test-overlays') ? { presentation:
         { type: 'overlay', width: 380, height: 360, collapsedWidth: 340, collapsedHeight: 36 } } : {}) }] })),
     start: async () => { localStorage.removeItem('test-overlay-closed'); changed.forEach(callback => callback()); },
+    setAutoStart: async (id, enabled) => {
+      localStorage.setItem(`test-auto-start:${id.split('-').at(-1)}`, String(enabled));
+      changed.forEach(callback => callback());
+    },
+    setMultipleWindows: async (id, allowed) => {
+      localStorage.setItem(`test-multiple:${id.split('-').at(-1)}`, String(allowed));
+      changed.forEach(callback => callback());
+    },
     setIcon: async id => {
       localStorage.setItem('test-icon-changed', id);
       changed.forEach(callback => callback());
@@ -51,7 +73,7 @@ contextBridge.exposeInMainWorld('workDesk', {
       changed.forEach(callback => callback());
     }
   },
-  events: { pluginClosed: callback => { closed.add(callback); return () => closed.delete(callback); }, capabilityApproval: () => () => {}, configure: () => () => {}, pluginsChanged: callback => {
+  events: { messagesChanged: () => () => {}, pluginClosed: callback => { closed.add(callback); return () => closed.delete(callback); }, capabilityApproval: () => () => {}, configure: () => () => {}, pluginsChanged: callback => {
     changed.add(callback);
     return () => changed.delete(callback);
   }, error: () => {}, pluginEvent: () => () => {} }

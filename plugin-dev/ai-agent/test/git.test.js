@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { readGit, switchGitBranch } from '../src/main/common/git.js';
 import { temporaryStore, fakePty } from '../../../desk/test/helpers.js';
 import { Sessions } from '../src/main/common/sessions.js';
@@ -68,4 +68,49 @@ test('Git branch switch checks every owner in the canonical worktree and refresh
   assert.equal(b.git.branch, 'other');
   await sessions.stopAndArchive('owner-a', 'test');
   await sessions.stopAndArchive('owner-b', 'test');
+});
+
+test('Git refresh discovers new remote branches without changing the worktree and retains the list on failure', async t => {
+  const store = await temporaryStore(t);
+  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' }).toString().trim();
+  const remote = `${store.root}/remote.git`;
+  const seed = `${store.root}/seed`;
+  const work = `${store.root}/work`;
+  await mkdir(seed);
+  git(store.root, 'init', '--bare', '-b', 'main', remote);
+  git(seed, 'init', '-b', 'main');
+  git(seed, 'config', 'user.name', 'Desk Test');
+  git(seed, 'config', 'user.email', 'desk@example.invalid');
+  git(seed, 'commit', '--allow-empty', '-m', 'fixture');
+  git(seed, 'remote', 'add', 'origin', remote);
+  git(seed, 'push', 'origin', 'main');
+  git(seed, 'branch', 'feature/obsolete');
+  git(seed, 'push', 'origin', 'feature/obsolete');
+  git(store.root, 'clone', remote, work);
+  const pty = fakePty();
+  const sessions = new Sessions({ storage: store, spawn: pty.spawn, guard: (_, work) => work(),
+    adapter: () => ({ buildLaunch: () => ({ command: '/bin/cat', args: [] }) }),
+    processControl: async session => session.terminal.kill() });
+  t.after(() => sessions.stopAndArchive('owner', 'test'));
+  const created = await sessions.create('owner', { adapterId: 'test', cwd: work });
+  const session = sessions.get('owner', created.id);
+  session.activity = 'idle';
+  git(seed, 'branch', 'feature/latest');
+  git(seed, 'push', 'origin', 'feature/latest');
+  git(seed, 'push', 'origin', '--delete', 'feature/obsolete');
+  await writeFile(`${work}/draft.txt`, 'keep local changes');
+  assert.deepEqual((await sessions.gitInfo('owner', created.id)).branches, ['feature/obsolete', 'main']);
+  const info = await sessions.refreshGit('owner', created.id);
+  assert.deepEqual(info.branches, ['feature/latest', 'main']);
+  assert.equal(info.branch, 'main');
+  assert.equal(git(work, 'branch', '--show-current'), 'main');
+  assert.equal(await readFile(`${work}/draft.txt`, 'utf8'), 'keep local changes');
+  await sessions.switchBranch('owner', created.id, 'feature/latest');
+  assert.equal(git(work, 'rev-parse', '--abbrev-ref', '@{upstream}'), 'origin/feature/latest');
+  git(work, 'remote', 'set-url', 'origin', `${store.root}/missing.git`);
+  const previous = session.git;
+  await assert.rejects(sessions.refreshGit('owner', created.id), /刷新失败/);
+  assert.deepEqual(session.git, previous);
+  git(work, 'remote', 'remove', 'origin');
+  assert.deepEqual((await sessions.refreshGit('owner', created.id)).branches, ['feature/latest', 'main']);
 });

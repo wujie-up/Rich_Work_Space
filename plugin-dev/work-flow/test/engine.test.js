@@ -152,7 +152,7 @@ test('等待服务调用期间取消运行会归档', async t => {
   assert.equal(stored[stored.length - 1].pending, null);
 });
 
-test('停止时等待运行任务结束并归档，等待中的运行一并取消', async t => {
+test('插件停止保留等待节点和续跑检查点，不执行下游', async t => {
   const { engine } = await harness(t, {});
   const target = workflow([node('source', 'text.input', { content: 'x' }),
     node('review', 'agent.review', { input: '{{source.text}}' }), node('collect', 'result.collect')],
@@ -163,9 +163,11 @@ test('停止时等待运行任务结束并归档，等待中的运行一并取�
   assert.equal(engine.snapshot().length, 0);
   const stored = await engine.runs.list(target.id);
   assert.equal(stored.length, 1);
-  assert.equal(stored[0].status, 'canceled');
-  assert.equal(stored[0].error.code, 'PLUGIN_STOPPED');
-  assert.equal(stored[0].nodes.collect.status, 'skipped');
+  assert.equal(stored[0].status, 'interrupted');
+  assert.equal(stored[0].error.code, 'RUN_INTERRUPTED');
+  assert.equal(stored[0].nodes.collect, undefined);
+  assert.equal(stored[0].pending.nodeId, 'review');
+  assert.equal(stored[0].resumable, true);
   assert.equal(paused.status, 'waiting');
 });
 
@@ -319,4 +321,107 @@ test('首次运行落盘失败撤销内存状态，恢复后允许下一次运�
   assert.equal(engine.records.size, 0);
   runs.append = append;
   assert.equal((await settled(engine, (await engine.start(target)).id)).status, 'succeeded');
+});
+
+test('用户介入等待输入、校验空内容，确认后在同一次运行继续', async t => {
+  const { engine, runs } = await harness(t);
+  const target = workflow([node('source', 'text.input', { content: '请提供项目目录' }),
+    node('human', 'flow.user-input', { title: '补充需求', prompt: '{{source.text}}', initialValue: '项目目录：' }),
+    node('done', 'flow.end', { input: '{{human.text}}' })],
+  [{ from: 'source', to: 'human' }, { from: 'human', to: 'done' }]);
+  const run = await settled(engine, (await engine.start(target)).id);
+  assert.equal(run.status, 'waiting');
+  assert.equal(run.pending.kind, 'manual');
+  assert.equal(run.pending.form.prompt, '请提供项目目录');
+  assert.equal(run.pending.form.initialValue, '项目目录：');
+  assert.equal(run.nodes.done, undefined);
+  const input = { requestId: run.pending.form.id, text: '项目目录：/tmp/demo' };
+  await assert.rejects(engine.complete(run.id, 'human', { ...input, text: '  ' }), { code: 'INVALID_ARGUMENT' });
+  assert.equal(engine.get(run.id).status, 'waiting');
+  const done = await engine.complete(run.id, 'human', input);
+  assert.equal(done.id, run.id);
+  assert.equal(done.status, 'succeeded');
+  assert.equal(done.nodes.done.output.final, input.text);
+  assert.equal((await runs.list(target.id)).length, 1);
+  await assert.rejects(engine.complete(run.id, 'human', input), { code: 'RUN_NOT_WAITING' });
+});
+
+test('用户介入循环中旧弹窗不能提交到新一轮，停止后不能继续', async t => {
+  const { engine } = await harness(t);
+  const target = workflow([node('source', 'text.input', { content: '需求' }),
+    node('human', 'flow.user-input', { prompt: '已有记录：{{loop.previous}}' }),
+    node('round', 'flow.loop', { input: '{{human.text}}', operator: 'not-equals', expected: '完成', maxIterations: 3 }),
+    node('done', 'flow.end', { input: '{{human.text}}' })],
+  [{ from: 'source', to: 'human' }, { from: 'human', to: 'round' },
+    { from: 'round', to: 'human', branch: 'continue' }, { from: 'round', to: 'done', branch: 'exit' }]);
+  const run = await settled(engine, (await engine.start(target)).id);
+  const oldInput = { requestId: run.pending.form.id, text: '项目目录：/tmp/demo' };
+  const again = await engine.complete(run.id, 'human', oldInput);
+  assert.equal(again.status, 'waiting');
+  assert.notEqual(again.pending.form.id, oldInput.requestId);
+  assert.match(again.pending.form.prompt, /项目目录/);
+  await assert.rejects(engine.complete(run.id, 'human', oldInput), { code: 'RUN_INPUT_STALE' });
+  const pending = { requestId: again.pending.form.id, text: '完成' };
+  await engine.cancel(run.id);
+  await assert.rejects(engine.complete(run.id, 'human', pending), { code: 'RUN_NOT_WAITING' });
+  assert.equal(engine.get(run.id).nodes.done.status, 'skipped');
+});
+
+test('文件介入等待选择，输出文档原文和文件信息，之后单选确认继续', async t => {
+  const { engine } = await harness(t);
+  const target = workflow([
+    node('document', 'flow.user-input', { interaction: 'file', title: '选择需求文档' }),
+    node('decision', 'flow.user-input', { interaction: 'choice', prompt: '{{document.text}}', options: '继续开发\n补充需求' }),
+    node('done', 'flow.end', { input: '{{decision.text}}' })
+  ], [{ from: 'document', to: 'decision' }, { from: 'decision', to: 'done' }]);
+  const run = await settled(engine, (await engine.start(target)).id);
+  assert.equal(run.pending.form.interaction, 'file');
+  const input = { requestId: run.pending.form.id, text: '项目目录：/tmp/demo', file: { name: '需求.md', size: 40 } };
+  await assert.rejects(engine.complete(run.id, 'document', { ...input, file: undefined }), { code: 'INVALID_ARGUMENT' });
+  const choice = await engine.complete(run.id, 'document', input);
+  assert.equal(choice.pending.form.interaction, 'choice');
+  assert.deepEqual(choice.pending.form.options, ['继续开发', '补充需求']);
+  assert.equal(choice.pending.form.prompt, input.text);
+  assert.equal(choice.nodes.document.output.file.name, '需求.md');
+  await assert.rejects(engine.complete(run.id, 'decision', { requestId: choice.pending.form.id, text: '伪造选项' }),
+    { code: 'INVALID_ARGUMENT' });
+  const done = await engine.complete(run.id, 'decision', { requestId: choice.pending.form.id, text: '继续开发' });
+  assert.equal(done.status, 'succeeded');
+  assert.equal(done.nodes.done.output.final, '继续开发');
+});
+
+test('用户介入问题逐题保存，完整答复后才执行下游，过期答复无效', async t => {
+  const { engine, runs } = await harness(t);
+  const flow = workflow([node('ask', 'flow.user-input', { prompt: '["第一题","第二题","第三题"]' }),
+    node('collect', 'result.collect', { input: '{{ask.text}}' })], [{ from: 'ask', to: 'collect' }]);
+  const paused = await settled(engine, (await engine.start(flow)).id);
+  const batch = paused.pending.interaction;
+  assert.equal(batch.questions.length, 3);
+  await engine.answer(paused.id, { batchId: batch.id, questionId: batch.questions[0].id, text: '甲' });
+  assert.equal(engine.get(paused.id).pending.interaction.currentIndex, 1);
+  assert.equal((await runs.list(flow.id))[0].pending.interaction.answers[batch.questions[0].id], '甲');
+  await assert.rejects(engine.answer(paused.id, { batchId: batch.id, questionId: batch.questions[0].id, text: '重复' }), /失效/);
+  await engine.answer(paused.id, { batchId: batch.id, questionId: batch.questions[1].id, text: '乙' });
+  const final = await engine.answer(paused.id, { batchId: batch.id, questionId: batch.questions[2].id, text: '丙' });
+  assert.equal(final.status, 'succeeded');
+  assert.match(final.nodes.collect.output.report, /第一题\n甲[\s\S]*第三题\n丙/);
+});
+
+test('原生 Agent 批次只在最后一题统一回复一次，保留原生问题 ID', async t => {
+  const replies = [];
+  const { engine } = await harness(t, { agents: {
+    run: async () => ({ state: 'running', requests: [{ id: 41, method: 'item/tool/requestUserInput', params: {
+      questions: [{ id: 'a', question: '模式', options: [{ label: '回合制', description: '轮流行动' }] }, { id: 'b', question: '规则' }]
+    } }] }), respond: async (...args) => replies.push(args)
+  } });
+  const paused = await settled(engine, (await engine.start(workflow([node('agent', 'agent.review', { input: 'p' })]))).id);
+  await engine.resume(paused.id);
+  const batch = engine.get(paused.id).pending.interaction;
+  await engine.answer(paused.id, { batchId: batch.id, questionId: 'a', text: '回合制' });
+  assert.equal(replies.length, 0);
+  await engine.answer(paused.id, { batchId: batch.id, questionId: 'b', text: '立即行动' });
+  assert.equal(replies.length, 1);
+  assert.deepEqual(replies[0][1], { requestId: 41, answers: { a: '回合制', b: '立即行动' } });
+  await engine.resume(paused.id);
+  assert.equal(engine.get(paused.id).pending.interaction, null);
 });

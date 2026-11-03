@@ -7,7 +7,8 @@
       ],
       "env": {
         "METABASE_URL": "https://bi.dbaifin.com",
-        "METABASE_SESSION": "REPLACE_LOCALLY_DO_NOT_COMMIT"
+        "METABASE_USERNAME": "REPLACE_LOCALLY_DO_NOT_COMMIT",
+        "METABASE_PASSWORD": "REPLACE_LOCALLY_DO_NOT_COMMIT"
       }
     }
   }

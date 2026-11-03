@@ -6,8 +6,8 @@ import { stopProcessGroups } from '../os/index.js';
 
 // Only messages cross this boundary; plugin modules are never imported into the host.
 export class PluginRuntime {
-  constructor({ id, directory, storage, emit, onFailure, serviceRequest, timeout = 30000 }) {
-    Object.assign(this, { id, emit, onFailure, serviceRequest, timeout });
+  constructor({ id, directory, storage, emit, onFailure, onCleanup, serviceRequest, timeout = 30000 }) {
+    Object.assign(this, { id, emit, onFailure, onCleanup, serviceRequest, timeout });
     this.instanceId = randomUUID();
     this.services = [];
     this.capabilityPending = new Map();
@@ -16,7 +16,8 @@ export class PluginRuntime {
     this.ownedPids = new Set();
     this.resources = [];
     this.child = fork(fileURLToPath(new URL('./plugin-worker.js', import.meta.url)), [], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, silent: true,
+      // Ordinary descendants inherit this private group even when the worker crashes before reporting them.
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, silent: true, detached: true,
       serialization: 'advanced'
     });
     this.child.stdout.on('data', (data) => console.info(`[plugin:${id}] ${data.toString().trimEnd()}`));
@@ -136,6 +137,14 @@ export class PluginRuntime {
     }
   }
 
+  notifyChannel(value) {
+    if (!this.closed && this.child.connected) {
+      this.child.send({ type: 'channel.event', value }, error => {
+        if (error) { console.error('[plugin:channel-notify]', { pluginId: this.id, error: error.stack }); }
+      });
+    }
+  }
+
   notifyCapability(value) {
     if (!this.closed && this.child.connected) {
       this.child.send({ type: 'capability.event', value });
@@ -168,10 +177,12 @@ export class PluginRuntime {
     }
     this.capabilityPending.clear();
     this.child.kill('SIGKILL');
-    this.cleanup = stopProcessGroups([...this.ownedPids]);
+    const pids = [...new Set([this.child.pid, ...this.ownedPids].filter(Boolean))];
+    console.info('[plugin:cleanup]', { pluginId: this.id, pids });
+    this.cleanup = stopProcessGroups(pids).then(() => this.onCleanup?.(this));
     this.cleanup.catch((error) => {
       this.cleanupError = error;
-      console.error('[plugin:cleanup]', { pluginId: this.id, message: error.message });
+      console.error('[plugin:cleanup]', { pluginId: this.id, pids, message: error.message });
     });
     return this.cleanup;
   }

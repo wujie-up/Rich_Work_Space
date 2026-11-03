@@ -1,0 +1,20 @@
+{
+  "id": "message-bridge",
+  "name": "消息对接",
+  "version": "0.1.5",
+  "type": "application",
+  "showIcon": true,
+  "loadOnStartup": false,
+  "background": "service",
+  "singleInstance": true,
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "main": "src/main/common/index.js",
+  "icon": "ico/icon.svg",
+  "description": "按来源与触发规则将飞书、微信消息连接到持久 Agent 会话，并将结果回复到原聊天。",
+  "capabilities": ["message-bridge"],
+  "requiredHostFeatures": ["desk.capabilities.v1"],
+  "views": [{ "id": "bridge", "title": "消息对接", "entry": "dist/renderer/index.html" }],
+  "settings": { "entry": "dist/renderer/index.html" },
+  "closeDescription": "停止渠道监听并关闭外部交互，保留渠道配置、会话绑定和记录；重新启用后不补发关闭前的结果。"
+}

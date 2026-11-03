@@ -9,6 +9,18 @@ test('old or missing AI reports unsupported instead of pretending recording', as
   await assert.rejects(client.configure({ enabled: true, target: { pluginId: 'missing', instanceId: 'x', windowId: 'y', conversationId: 'z' } }), /Agent/);
 });
 
+test('closing the last Agent window stops local renewal even after its provider disappears', async () => {
+  let available = true;
+  const provider = { pluginId: 'agent', contract: 'agent.capture.v2' };
+  const client = new SessionCaptureClient({ discover: async () => available ? [provider] : [],
+    invoke: async (_provider, input) => ({ enabled: input.enabled }) });
+  await client.configure({ enabled: true, target: { pluginId: 'agent', instanceId: 'runtime', windowId: 'window', conversationId: 'one' } });
+  available = false;
+  await assert.rejects(client.configure({ enabled: false }), /Agent/);
+  assert.equal(client.enabled, false);
+  await client.renew();
+});
+
 test('selection stops old conversation, leases only selected target, body reads stay scoped', async () => {
   const calls = [];
   const provider = { pluginId: 'ai-agent', contract: 'agent.capture.v2', method: 'capture.service' };

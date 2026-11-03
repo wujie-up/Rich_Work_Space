@@ -5,7 +5,10 @@ export function deploymentForm(value) {
   return `<div id="script">
 <div class="row"><label>语言<select name="language"><option value="javascript">JavaScript</option><option value="python">Python</option></select></label>
 <label>入口文件<input name="entry" value="${escape(value.entry || 'server.mjs')}"></label></div>
-<label>服务代码<textarea name="source" spellcheck="false" placeholder="粘贴 Python 或 JavaScript MCP 服务代码">${escape(value.source || '')}</textarea></label>
+<details id="service-code"><summary>服务代码</summary><label><textarea aria-label="服务代码" name="source" spellcheck="false" placeholder="粘贴 Python 或 JavaScript MCP 服务代码">${escape(value.source || '')}</textarea></label></details>
+<details><summary>环境变量</summary>
+<label>JSON 对象（敏感配置仅存本机）<textarea name="script-env" spellcheck="false" autocomplete="off">${escape(JSON.stringify(value.env || {}, null, 2))}</textarea></label>
+</details>
 <details><summary>运行与导入设置</summary>
 <label>运行环境<input name="interpreter" placeholder="node / python3 / 虚拟环境解释器绝对路径" value="${escape(value.interpreter || '')}"></label>
 <small>运行环境与依赖须预先准备；Python 可指定虚拟环境解释器。</small>
@@ -17,9 +20,9 @@ export function deploymentForm(value) {
 </details></div>`;
 }
 
-// Editing declarations must retain stored configuration even though parameter inputs are no longer displayed.
+// Configuration stays separate from source so secrets never enter a portable deployment.
 export function bindDeployment(form, value) {
-  let files;
+  let files = value.files;
   let fields = value.fields || defaults;
   const applyFields = () => {
     const next = JSON.parse(form.elements.fields.value);
@@ -78,9 +81,13 @@ export function bindDeployment(form, value) {
   for (const id of ['script-file', 'script-directory']) { form.querySelector(`#${id}`).onchange = importFiles; }
   return () => {
     applyFields();
+    const env = JSON.parse(form.elements['script-env'].value);
+    if (!env || typeof env !== 'object' || Array.isArray(env) || Object.values(env).some(value => typeof value !== 'string')) {
+      throw Error('环境变量必须是值为字符串的 JSON 对象');
+    }
     const source = form.elements.source.value;
     return { language: form.elements.language.value, entry: form.elements.entry.value, interpreter: form.elements.interpreter.value,
-      fields, env: { ...value.env }, deployment: value.deployment,
+      fields, env, deployment: value.deployment,
       ...(files ? { files } : {}),
       ...(!value.deployment || files || source !== value.source ? { source } : {}) };
   };

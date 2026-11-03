@@ -1,0 +1,7 @@
+.roles-dialog{width:640px;max-width:calc(100vw - 32px);max-height:calc(100vh - 32px)}
+.roles-dialog .dialog-body{min-height:0;overflow:auto;max-height:calc(100vh - 180px)}
+.roles-dialog article{display:flex;align-items:center;gap:12px;padding:16px 0;border-bottom:1px solid var(--border)}
+.roles-dialog .role-summary{flex:1;min-width:0;overflow-wrap:anywhere}
+.roles-dialog .role-summary p{margin:4px 0;white-space:pre-wrap}
+.roles-dialog .role-actions{display:flex;gap:6px;margin-left:auto;flex-shrink:0}
+.roles-dialog .actions{display:flex;justify-content:flex-end;gap:6px}

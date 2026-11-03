@@ -1,0 +1,57 @@
+:root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; }
+:root[data-theme=light] { color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--desk-control-text); background: var(--desk-control-bg); }
+#app { min-width: 0; }
+button, input, select { font-family: inherit; }
+.toolbar { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; padding: 24px 24px 12px; margin: 0; }
+label { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.toolbar label { flex: 1 1 180px; }
+.toolbar .search-field { flex-basis: 200px; }
+.toolbar > span { display: flex; padding-bottom: 4px; }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px;
+  flex: 0 0 36px; padding: 8px; cursor: pointer; color: inherit; }
+.icon-button svg { width: 20px; height: 20px; flex-shrink: 0; }
+.result-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 24px; }
+.result-controls label { margin-left: auto; flex: 0 1 160px; }
+#total { flex: 1 1 240px; line-height: 1.8; overflow-wrap: anywhere; }
+#total strong { font-size: 26px; font-variant-numeric: tabular-nums; font-weight: 600; }
+#status { color: var(--desk-muted); margin: 8px 24px 20px; line-height: 1.7; overflow-wrap: anywhere; }
+#status[data-error=true] { color: #c36e6e; }
+.table-scroll { width: 100%; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; text-align: left; }
+th { font-weight: 500; color: var(--desk-muted); white-space: nowrap; }
+th, td { padding: 12px 18px; border-bottom: 1px solid var(--desk-control-border); line-height: 1.6; }
+td { vertical-align: middle; }
+td:nth-child(2) { min-width: 220px; max-width: 540px; overflow-wrap: anywhere; }
+td:not(:nth-child(2)) { white-space: nowrap; }
+td:nth-child(7) { text-align: right; font-variant-numeric: tabular-nums; }
+tbody tr:hover { background: var(--desk-hover); }
+.help { display: inline-flex; align-self: center; position: relative; }
+.help [role=tooltip] { display: none; position: absolute; z-index: 10; top: 100%; left: 0; width: 300px;
+  max-width: calc(100vw - 56px); }
+.help:has(button:is(:hover, :focus)) [role=tooltip] { display: block; }
+.settings-form { width: 100%; max-width: 720px; padding: 20px 24px; }
+fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.settings-form label, .settings-form input:not([type=checkbox]), .settings-form select { width: 100%; }
+#token-fields, #client-fields { display: flex; flex-direction: column; gap: 12px; }
+[hidden] { display: none !important; }
+.settings-form .check { display: flex; flex-direction: row; align-items: center; line-height: 1.6; }
+.check input { flex-shrink: 0; }
+#auth-impact { margin: 0; line-height: 1.7; }
+.settings-actions { display: flex; gap: 12px; align-items: center; }
+.main-login { padding: 16px 24px 0; }
+.login-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.login-state { flex: 1 1 180px; line-height: 1.7; overflow-wrap: anywhere; }
+.login-controls dialog { width: 300px; }
+.settings-form #status { margin: 18px 0 0; }
+@media (max-width: 560px) {
+  .toolbar { padding: 18px 16px 8px; gap: 10px; }
+  .toolbar label { flex-basis: calc(100% - 60px); }
+  .toolbar .search-field { flex-basis: calc(100% - 60px); }
+  .result-controls { padding: 8px 16px; }
+  .result-controls label { margin-left: 0; flex: 1 1 100%; }
+  #status { margin: 8px 16px 16px; }
+  .settings-form { padding: 16px; }
+  .main-login { padding: 16px 16px 0; }
+}

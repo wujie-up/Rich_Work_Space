@@ -1,5 +1,5 @@
-const PLACEHOLDER = /\{\{\s*([\w.-]+)\s*\}\}/g;
-const WHOLE = /^\{\{\s*([\w.-]+)\s*\}\}$/;
+const PLACEHOLDER = /\{\{\s*([\w.-]+(?:\s*\?\?\s*[\w.-]+)*)\s*\}\}/g;
+const WHOLE = /^\{\{\s*([\w.-]+(?:\s*\?\?\s*[\w.-]+)*)\s*\}\}$/;
 
 export function readPath(variables, path) {
   let current = variables;
@@ -32,10 +32,20 @@ export function stringify(value) {
   }
 }
 
+// Select the current loop draft without also transmitting the original; empty values remain deliberate values.
+function resolveExpression(variables, expression) {
+  if (!expression.includes('??')) { return readPath(variables, expression); }
+  for (const path of expression.split('??')) {
+    const resolved = readPath(variables, path.trim());
+    if (resolved !== undefined && resolved !== null) { return resolved; }
+  }
+  return undefined;
+}
+
 // A lone placeholder keeps its original type, so arrays and objects can flow between nodes unchanged.
 export function value(input, variables) {
   const whole = typeof input === 'string' ? WHOLE.exec(input.trim()) : null;
-  return whole ? readPath(variables, whole[1]) : interpolate(input, variables);
+  return whole ? resolveExpression(variables, whole[1]) : interpolate(input, variables);
 }
 
 export function interpolate(input, variables) {
@@ -43,7 +53,7 @@ export function interpolate(input, variables) {
     return input;
   }
   return input.replace(PLACEHOLDER, (match, path) => {
-    const resolved = readPath(variables, path);
+    const resolved = resolveExpression(variables, path);
     return resolved === undefined ? '' : stringify(resolved);
   });
 }

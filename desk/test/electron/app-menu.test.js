@@ -6,9 +6,9 @@ import { launch } from './helpers.js';
 
 test('app menu: configuration opens from native menu, restores hidden window and retains workspace', { timeout: 30000 }, async (t) => {
   const { app, page } = await launch(t, { openPlugin: false, ...(process.env.DESK_EXECUTABLE ? { executablePath: process.env.DESK_EXECUTABLE } : {}) });
-  assert.equal(await app.evaluate(({ app }) => app.getName()), 'DeckPg');
-  assert.equal(await page.title(), 'DeckPg');
-  assert.equal(await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items[0].label), 'DeckPg');
+  assert.equal(await app.evaluate(({ app }) => app.getName()), 'DeskPG');
+  assert.equal(await page.title(), 'DeskPG');
+  assert.equal(await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items[0].label), 'DeskPG');
   assert.equal(await page.locator('#configuration, #active-app').count(), 0);
   const nativeOpen = async () => app.evaluate(({ Menu }) => {
     const item = Menu.getApplicationMenu().getMenuItemById('configuration');

@@ -1,0 +1,24 @@
+{
+  "checkedAt": "2026-11-03T05:56:22.838Z",
+  "installedVersion": "0.5.57",
+  "workflowId": "5447a3ad-6544-47ad-80c5-f916afd76d65",
+  "nodeCount": 8,
+  "timeoutHours": 6,
+  "preserved": {
+    "feishu-robot.json": true,
+    "runs/5447a3ad-6544-47ad-80c5-f916afd76d65.json": true
+  },
+  "tests": {
+    "passed": 39,
+    "failed": 0
+  },
+  "trigger": {
+    "mode": "manual",
+    "at": "",
+    "every": 1,
+    "unit": "minute",
+    "enabled": false
+  },
+  "actualBusinessMessagesSent": 0,
+  "archive": "plugin-dev/dist/work-flow-0.5.57.plg"
+}

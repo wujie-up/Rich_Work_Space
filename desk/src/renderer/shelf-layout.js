@@ -1,11 +1,11 @@
 import { message } from './i18n.js';
 // Keep launcher placement separate from plugin windows and their lifecycle.
-export function mountShelfLayout(shelf) {
+export function mountShelfLayout(shelf, { storageKey = 'plugin-shelf-fine-layout', measure, resizable = true } = {}) {
   let positions;
   try {
-    const saved = localStorage.getItem('plugin-shelf-fine-layout');
+    const saved = localStorage.getItem(storageKey);
     // Keep the original layout intact while mapping its larger cells to the finer grid.
-    positions = saved ? JSON.parse(saved) : Object.fromEntries(
+    positions = saved ? JSON.parse(saved) : storageKey !== 'plugin-shelf-fine-layout' ? {} : Object.fromEntries(
       Object.entries(JSON.parse(localStorage.getItem('plugin-shelf-layout') || '{}')).map(([id, position]) => [id,
         { col: position.col * 2, row: position.row * (shelf.dataset.names === 'hidden' ? 2 : 3), span: position.span * 2 }]));
   } catch (error) {
@@ -14,20 +14,35 @@ export function mountShelfLayout(shelf) {
   }
   let gesture;
   let placed = new Map();
+  let previousGrid;
+  let reflow = false;
+
+  const identity = node => node.dataset.layoutId || node.dataset.plugin;
 
   function geometry() {
+    if (measure) {
+      return measure();
+    }
     const size = Number.parseFloat(getComputedStyle(shelf).getPropertyValue('--shelf-icon-size')) || 36;
     const width = Math.max(size + 8, shelf.clientWidth - 8);
-    const columns = Math.max(2, Math.floor((width + 4) / ((size + 12) / 2)));
+    const columns = Math.max(2, Math.min(4, Math.floor((width + 4) / (size + 12)) * 2));
     const column = (width + 4) / columns;
-    const rows = Math.max(0, Math.floor((shelf.clientHeight - 12) / column));
-    return { size, columns, rows, column, row: column };
+    const labelRows = shelf.dataset.names === 'hidden' ? 0 : 1;
+    const viewportRows = Math.max(0, Math.floor((shelf.clientHeight - 12) / column));
+    // The shelf scrolls independently; reserve room for every icon without changing saved coordinates.
+    const savedBottom = Object.values(positions).reduce((bottom, position) =>
+      Math.max(bottom, position.row + Math.min(columns, position.span) + labelRows), 0);
+    const contentRows = [...shelf.children].reduce((rows, node) =>
+      rows + Math.min(columns, positions[identity(node)]?.span || 2) + labelRows, 0);
+    const rows = Math.max(viewportRows, savedBottom) + contentRows;
+    // Two minimum-size icons fit across; a 3×4 tile includes its name within twelve cells.
+    return { size, columns, rows, column, row: column, maxSpan: 3 };
   }
 
   // Resolve each preview from pointer-down positions so hovering cannot cascade through the shelf.
   function movePreview(next) {
     const grid = geometry();
-    const labelRows = shelf.dataset.names === 'hidden' ? 0 : 1;
+    const labelRows = grid.labelRows ?? (shelf.dataset.names === 'hidden' ? 0 : 1);
     const overlaps = (a, b) => a.col < b.col + b.span && b.col < a.col + a.span
       && a.row < b.row + b.span + labelRows && b.row < a.row + a.span + labelRows;
     const draft = new Map(gesture.placements);
@@ -78,25 +93,38 @@ export function mountShelfLayout(shelf) {
     shelf.style.gridAutoRows = `${grid.row - 4}px`;
     shelf.style.setProperty('--shelf-cell-width', `${grid.column}px`);
     shelf.style.setProperty('--shelf-cell-height', `${grid.row}px`);
-    const labelRows = shelf.dataset.names === 'hidden' ? 0 : 1;
+    const labelRows = grid.labelRows ?? (shelf.dataset.names === 'hidden' ? 0 : 1);
     const fits = (col, row, span) => row + span + labelRows <= grid.rows
       && Array.from({ length: span + labelRows }, (_, y) =>
         Array.from({ length: span }, (_, x) => !occupied.has(`${col + x}:${row + y}`))).flat().every(Boolean);
     // Explicit placements claim cells first; automatic icons fill the remaining spaces.
     const savedOrder = Object.keys(positions);
-    const ordered = [...nodes].sort((a, b) => Number(a.dataset.plugin === priority) - Number(b.dataset.plugin === priority)
-      || Number(Boolean(positions[b.dataset.plugin])) - Number(Boolean(positions[a.dataset.plugin]))
-      || savedOrder.indexOf(a.dataset.plugin) - savedOrder.indexOf(b.dataset.plugin));
+    // Width changes pack the visible shelf; keep stored preferences intact until the next explicit edit.
+    if (!measure && previousGrid && previousGrid.column !== grid.column) {
+      reflow = true;
+    }
+    const compact = !measure && !priority && !draft && (reflow || nodes.some(node => {
+      const position = positions[identity(node)];
+      return position && position.col + position.span > grid.columns;
+    }));
+    const ordered = [...nodes].sort((a, b) => Number(identity(a) === priority) - Number(identity(b) === priority)
+      || (compact ? (positions[identity(a)]?.row || 0) - (positions[identity(b)]?.row || 0)
+        || (positions[identity(a)]?.col || 0) - (positions[identity(b)]?.col || 0) : 0)
+      || Number(Boolean(positions[identity(b)])) - Number(Boolean(positions[identity(a)]))
+      || savedOrder.indexOf(identity(a)) - savedOrder.indexOf(identity(b)));
+    const reuseCompact = compact && previousGrid?.columns === grid.columns && previousGrid?.column === grid.column
+      && previousGrid?.size === grid.size && previousGrid?.labelRows === labelRows;
+    previousGrid = { ...grid, labelRows };
     for (const node of ordered) {
-      const id = node.dataset.plugin;
+      const id = identity(node);
       if ((draft && !draft.has(id)) || (priority && !previous.has(id))) {
         node.hidden = true;
         continue;
       }
-      const saved = draft ? draft.get(id) : id === priority ? preview : priority ? previous.get(id) : positions[id];
-      let span = Math.max(2, Math.min(grid.columns, grid.rows - labelRows, saved?.span || 2));
-      let col = Math.max(0, Math.min(grid.columns - span, saved?.col || 0));
-      let row = Math.max(0, Math.min(grid.rows - span - labelRows, saved?.row || 0));
+      const saved = draft ? draft.get(id) : id === priority ? preview : priority || reuseCompact ? previous.get(id) : positions[id];
+      let span = Math.max(2, Math.min(grid.maxSpan ?? Infinity, grid.columns, grid.rows - labelRows, saved?.span || 2));
+      let col = Math.max(0, Math.min(grid.columns - span, compact && !reuseCompact ? 0 : saved?.col || 0));
+      let row = Math.max(0, Math.min(grid.rows - span - labelRows, compact && !reuseCompact ? 0 : saved?.row || 0));
       // Resizing reserves neighbors; moving uses the collision preview instead.
       if (id === priority && !fits(col, row, span)) {
         ({ col, row, span } = previous.get(id));
@@ -140,11 +168,16 @@ export function mountShelfLayout(shelf) {
   // Pin automatic neighbors once; preserve saved preferences when the shelf temporarily narrows.
   function save(id, position) {
     for (const [key, placement] of placed) {
-      positions[key] ||= placement;
+      if (reflow) {
+        positions[key] = placement;
+      } else {
+        positions[key] ||= placement;
+      }
     }
+    reflow = false;
     positions[id] = position;
-    localStorage.setItem('plugin-shelf-fine-layout', JSON.stringify(positions));
-    console.info('[shelf:layout-save]', { pluginId: id, ...position });
+    localStorage.setItem(storageKey, JSON.stringify(positions));
+    console.info('[shelf:layout-save]', { storageKey, itemId: id, ...position });
   }
 
   function finish(event) {
@@ -177,7 +210,9 @@ export function mountShelfLayout(shelf) {
     handle.setAttribute('role', 'button');
     message(handle, '调整图标大小', 'aria-label');
     handle.tabIndex = 0;
-    node.append(handle);
+    if (resizable) {
+      node.append(handle);
+    }
     // A completed drag emits click too; consume it before the launcher opens a window.
     let suppressClick = false;
     node.addEventListener('click', event => {
@@ -192,13 +227,13 @@ export function mountShelfLayout(shelf) {
         return;
       }
       suppressClick = false;
-      gesture = { id: node.dataset.plugin, pointerId: event.pointerId, x: event.clientX, y: event.clientY,
-        placements: new Map(placed), start: placed.get(node.dataset.plugin), resize: event.target === handle, moved: false };
+      gesture = { id: identity(node), pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+        placements: new Map(placed), start: placed.get(identity(node)), resize: event.target === handle, moved: false };
       node.setPointerCapture(event.pointerId);
       event.preventDefault();
     });
     node.addEventListener('pointermove', event => {
-      if (!gesture || gesture.id !== node.dataset.plugin) {
+      if (!gesture || gesture.id !== identity(node)) {
         return;
       }
       const dx = event.clientX - gesture.x;
@@ -211,9 +246,9 @@ export function mountShelfLayout(shelf) {
       shelf.classList.add('shelf-arranging');
       const grid = geometry();
       const { col, row, span } = gesture.start;
-      const labelRows = shelf.dataset.names === 'hidden' ? 0 : 1;
+      const labelRows = grid.labelRows ?? (shelf.dataset.names === 'hidden' ? 0 : 1);
       const next = gesture.resize
-        ? { col, row, span: Math.max(2, Math.min(grid.columns - col, grid.rows - row - labelRows,
+        ? { col, row, span: Math.max(2, Math.min(grid.maxSpan ?? Infinity, grid.columns - col, grid.rows - row - labelRows,
           span + Math.round(Math.max(dx / grid.column, dy / grid.row)))) }
         : { col: Math.max(0, Math.min(grid.columns - span, col + Math.round(dx / grid.column))),
           row: Math.max(0, Math.min(grid.rows - span - labelRows, row + Math.round(dy / grid.row))), span };
@@ -232,11 +267,11 @@ export function mountShelfLayout(shelf) {
       }
       event.preventDefault();
       event.stopPropagation();
-      const id = node.dataset.plugin;
+      const id = identity(node);
       const current = placed.get(id);
       const grid = geometry();
-      const labelRows = shelf.dataset.names === 'hidden' ? 0 : 1;
-      const span = Math.max(2, Math.min(grid.columns - current.col, grid.rows - current.row - labelRows,
+      const labelRows = grid.labelRows ?? (shelf.dataset.names === 'hidden' ? 0 : 1);
+      const span = Math.max(2, Math.min(grid.maxSpan ?? Infinity, grid.columns - current.col, grid.rows - current.row - labelRows,
         current.span + (['ArrowDown', 'ArrowRight'].includes(event.key) ? 1 : -1)));
       layout({ ...current, span }, id);
       save(id, placed.get(id));
@@ -244,5 +279,27 @@ export function mountShelfLayout(shelf) {
   }
 
   new ResizeObserver(() => layout()).observe(shelf);
-  return { bind, layout: () => layout() };
+  return {
+    bind,
+    layout: () => {
+      if (!gesture) {
+        layout();
+      }
+    },
+    // File names are identities; carry placement across rename and discard removed entries.
+    rename: (from, to) => {
+      if (positions[from]) {
+        positions[to] = positions[from];
+        delete positions[from];
+        localStorage.setItem(storageKey, JSON.stringify(positions));
+      }
+    },
+    retain: ids => {
+      if (Object.keys(positions).some(id => !ids.has(id))) {
+        positions = Object.fromEntries(Object.entries(positions).filter(([id]) => ids.has(id)));
+        localStorage.setItem(storageKey, JSON.stringify(positions));
+      }
+    },
+    get arranging() { return Boolean(gesture); }
+  };
 }

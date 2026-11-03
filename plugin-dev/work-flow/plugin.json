@@ -2,7 +2,7 @@
   "id": "work-flow",
   "icon": "ico/icon.svg",
   "name": "工作流编排",
-  "version": "0.5.2",
+  "version": "0.5.70",
   "type": "application",
   "showIcon": true,
   "loadOnStartup": false,

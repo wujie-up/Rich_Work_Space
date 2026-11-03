@@ -1,15 +1,26 @@
+import '../../../../desk/src/resource/controls.css';
+import { pageLifecycle } from '../../../../desk/src/resource/page-lifecycle.js';
 import { api, conversationApi } from './api.js';
 import './conversation.css';
+import { setButtonIcon } from './ui.js';
 import './session-status.css';
 import { sessionStatus } from './session-status.js';
 import { renderDocumentLinks } from './document-links.js';
-import { engineSettings } from './engine-settings.js';
+import { showSettings } from './settings-dialog.js';
+import { isApprovalRequest, isElicitationRequest, pendingRequests } from '../shared/contracts.js';
+import { mountElicitation } from './mcp-elicitation.js';
+import { mountAppearance } from './appearance.js';
 
+const disposeAppearance = mountAppearance();
+window.addEventListener('pagehide', disposeAppearance, { once: true });
+
+const lifecycle = pageLifecycle();
 const $ = id => document.getElementById(id);
 const call = (method, ...args) => conversationApi.call(method, ...args);
 let windowId = /^agent-window:[a-f0-9-]{36}$/.test(window.name) ? window.name.slice(13) : crypto.randomUUID();
 window.name = `agent-window:${windowId}`;
-await call('conversation.registerWindow', { id: windowId });
+const hostWindow = await api.host.getWindowContext();
+await call('conversation.registerWindow', { id: windowId, hostWindowId: hostWindow?.id });
 for (const group of await call('conversation.listWindows')) {
   $('window-group').add(new Option(`${group.name} · ${group.id.slice(0, 8)}`, group.id));
 }
@@ -21,16 +32,40 @@ let engines = [];
 let records = [];
 let renderedId;
 let renderedCount = 0;
+const composerClientId = crypto.randomUUID();
+let composerVersion = 0;
+let reportedConversation;
+let composing = false;
+// An external turn can start only while every attached view reports a fresh, empty composer.
+async function reportComposer(detached = false) {
+  try {
+    if (reportedConversation && reportedConversation !== current?.id) {
+      await call('conversation.composer', reportedConversation, { clientId: composerClientId, version: ++composerVersion, detached: true });
+    }
+    reportedConversation = current?.id;
+    if (current) {
+      await call('conversation.composer', current.id, { clientId: composerClientId, version: ++composerVersion,
+        empty: !$('prompt').value, composing, detached });
+    }
+  } catch (error) {
+    console.error('[conversation:composer-report]', { conversationId: current?.id, error: error.message });
+  }
+}
+const composerHeartbeat = setInterval(() => reportComposer(), 2000);
+$('prompt').addEventListener('input', () => reportComposer());
+$('prompt').addEventListener('compositionstart', () => { composing = true; reportComposer(); });
+$('prompt').addEventListener('compositionend', () => { composing = false; reportComposer(); });
+window.addEventListener('pagehide', () => { clearInterval(composerHeartbeat); reportComposer(true); });
 const streamed = new Map();
 const stateIcon = document.createElement('span');
 stateIcon.className = 'session-status';
 stateIcon.setAttribute('role', 'img');
 $('state').before(stateIcon);
 window.addEventListener('document-open-error', event => displayError(event.detail));
-const displayError = error => { $('notice').textContent = error.message; };
+const displayError = error => { $('conversation-notice').textContent = error.message; };
 const action = fn => async event => {
   event?.preventDefault();
-  $('notice').textContent = '';
+  $('conversation-notice').textContent = '';
   try {
     await fn();
   } catch (error) {
@@ -55,6 +90,8 @@ function message(role, text, label) {
 }
 
 function render() {
+  if (reportedConversation !== current?.id) { reportComposer(); }
+  if (!lifecycle.visible()) { return; }
   const transcript = $('transcript');
   const reset = renderedId !== current?.id || (current?.events.length || 0) < renderedCount;
   const follow = reset || transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 60;
@@ -68,9 +105,11 @@ function render() {
   $('state').textContent = ({ running: '运行中', idle: '等待输入', failed: '执行失败', cancelled: '已停止', interrupted: '已中断' })[current?.state] || '就绪';
   $('send').disabled = runtime?.state !== 'ready' || current?.state === 'running';
   $('stop').disabled = current?.state !== 'running';
-  const answered = new Set((current?.events || []).filter(event => event.method === 'approval/answered' || event.params?.item?.type === 'approvalCancelled').map(event => event.params.requestId || event.params.item?.requestId));
+  $('reconnect-tools').disabled = !current;
+  const pending = new Map(pendingRequests(current?.events || []).map(event => [event.id, event]));
+  const pendingSequences = new Map([...pending].map(([id, event]) => [JSON.stringify(id), String(event.sequence)]));
   transcript.querySelectorAll('[data-request-id]').forEach(node => {
-    if (answered.has(node.dataset.requestId)) { node.remove(); }
+    if (pendingSequences.get(node.dataset.requestKey) !== node.dataset.requestSequence) { node.remove(); }
   });
   for (const event of (current?.events || []).slice(renderedCount)) {
     const params = event.params || {};
@@ -87,9 +126,18 @@ function render() {
       else { message('ai', params.item.text, current?.engineId === 'claude' ? 'Claude Code' : 'Codex'); }
     } else if (event.method === 'capability/invocation') {
       message('tool', `${params.invocationId} · ${params.state}`, '插件能力');
-    } else if (event.method === 'item/tool/requestUserInput' && !answered.has(event.id)) {
+    } else if (isElicitationRequest(event) && pending.get(event.id) === event) {
+      const conversationId = current.id;
+      const content = message('tool', '', params.mode === 'url' ? '需要你的授权' : '需要你的回答');
+      confirmation(content, event);
+      mountElicitation(content, event, { openUrl: url => api.host.openExternal(url), respond: async (decision, answer) => {
+        await call('conversation.elicit', conversationId, event.id, decision, answer);
+        const record = await call('conversation.read', conversationId);
+        if (current?.id === conversationId) { current = record; render(); }
+      } });
+    } else if (event.method === 'item/tool/requestUserInput' && pending.get(event.id) === event) {
       const content = message('tool', '', '需要你的回答');
-      confirmation(content, event.id);
+      confirmation(content, event);
       const answers = new Map();
       for (const question of params.questions) {
         const label = document.createElement('label');
@@ -101,19 +149,19 @@ function render() {
         answers.set(question.id, input);
       }
       const submit = document.createElement('button');
-      submit.textContent = '提交回答';
+      setButtonIcon(submit, '提交回答', 'send');
       submit.onclick = action(async () => {
         await call('conversation.answer', current.id, event.id, Object.fromEntries([...answers].map(([id, input]) => [id, input.value])));
         current = await call('conversation.read', current.id);
         render();
       });
       content.append(submit);
-    } else if (event.method.endsWith('/requestApproval') && !answered.has(event.id)) {
-      const content = message('tool', params.command || params.reason || JSON.stringify(params), '需要你的批准');
-      confirmation(content, event.id);
+    } else if (isApprovalRequest(event) && pending.get(event.id) === event) {
+      const content = message('tool', params.command || params.reason || params.message || JSON.stringify(params), '需要你的批准');
+      confirmation(content, event);
       for (const [title, decision] of [['批准', 'accept'], ['拒绝', 'decline']]) {
         const button = document.createElement('button');
-        button.textContent = title;
+        setButtonIcon(button, title, title === '批准' ? 'check' : 'close');
         button.onclick = action(async () => {
           await call('conversation.approve', current.id, event.id, decision);
           current = await call('conversation.read', current.id);
@@ -137,10 +185,12 @@ function render() {
 }
 
 // Keep each pending decision inside its own session, preserving typed answers during streamed updates.
-function confirmation(content, id) {
+function confirmation(content, event) {
   const node = content.closest('article');
   node.classList.add('confirmation');
-  node.dataset.requestId = id;
+  node.dataset.requestId = event.id;
+  node.dataset.requestKey = JSON.stringify(event.id);
+  node.dataset.requestSequence = event.sequence;
   node.setAttribute('role', 'dialog');
   node.setAttribute('aria-label', node.querySelector('.label').textContent);
 }
@@ -155,24 +205,28 @@ async function refreshHistory() {
   $('history').value = current?.id || '';
 }
 
-const settings = engineSettings({ onError: displayError, onChange: async (values, config) => {
+const settings = { async refresh() {
+  const [values, config] = await Promise.all([call('engines.list'), call('engines.config')]);
   engines = values;
   if (!current && !$('conversation-engine').dataset.selected) { $('conversation-engine').value = config.defaultEngine; }
   runtime = engines.find(engine => engine.id === (current?.engineId || $('conversation-engine').value || 'codex'));
   $('runtime-label').textContent = `${runtime.name} ${runtime.pin.version} · ${runtime.state === 'ready' ? '已安装' : '未安装'}`;
   render();
-} });
+} };
+conversationApi.onAccount(() => settings.refresh().catch(displayError));
 $('window-group').onchange = action(async () => {
   windowId = $('window-group').value;
   window.name = `agent-window:${windowId}`;
+  await call('conversation.registerWindow', { id: windowId, hostWindowId: hostWindow?.id });
   current = null;
   await refreshHistory();
   await settings.refresh();
 });
 $('settings-toggle').onclick = action(async () => {
-  $('settings').hidden = !$('settings').hidden;
-  $('settings-toggle').setAttribute('aria-expanded', String(!$('settings').hidden));
-  if (!$('settings').hidden) { await settings.refresh(); }
+  $('settings-toggle').setAttribute('aria-expanded', 'true');
+  try { await showSettings({ onEnginesChange: () => settings.refresh() }); }
+  finally { $('settings-toggle').setAttribute('aria-expanded', 'false'); }
+  await settings.refresh();
 });
 $('conversation-engine').onchange = action(async () => {
   $('conversation-engine').dataset.selected = 'true';
@@ -181,7 +235,7 @@ $('conversation-engine').onchange = action(async () => {
   await settings.refresh();
 });
 $('directory').onclick = action(async () => {
-  cwd = await api.host.chooseDirectory() || cwd;
+  cwd = await api.host.chooseDirectory({ defaultPath: current?.cwd || cwd }) || cwd;
   $('cwd').textContent = cwd || '独立空间';
 });
 $('new').onclick = action(async () => {
@@ -206,12 +260,18 @@ $('composer').onsubmit = action(async () => {
   await refreshHistory();
   render();
 });
+$('reconnect-tools').onclick = action(async () => {
+  if (!current) { throw Error('请先选择一个对话'); }
+  const result = await call('conversation.reconnect', current.id);
+  $('conversation-notice').textContent = result.pending ? '本轮执行不受影响，将在下一轮开始前重新连接工具' : '工具已重新连接，会话历史已保留';
+});
 $('stop').onclick = action(() => call('conversation.cancel', current.id));
 $('prompt').onkeydown = event => {
   if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
     $('composer').requestSubmit();
   }
 };
+lifecycle.subscribe(visible => { if (visible) { render(); } });
 let renderFrame;
 conversationApi.onEvent(({ conversationId, event, state }) => {
   if (current?.id === conversationId) {
@@ -219,6 +279,7 @@ conversationApi.onEvent(({ conversationId, event, state }) => {
       current.events.push(event);
     }
     current.state = state;
+    if (!lifecycle.visible()) { return; }
     renderFrame ||= requestAnimationFrame(() => { renderFrame = null; render(); });
   }
 });

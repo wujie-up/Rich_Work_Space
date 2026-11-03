@@ -55,25 +55,173 @@ const deferred = () => {
 };
 
 async function fixture(t, options = {}) {
-  const storage = await temporaryStore(t);
+  const cleanup = [];
+  const storage = await temporaryStore({ after: work => cleanup.push(work) });
   const service = new Conversations({ storage, pluginId: 'ai-test', runtime, Engine, createGateway: gateway,
     emit: () => {}, ownProcesses: () => {}, ...options });
   await service.load();
-  t.after(() => service.stop());
+  t.after(async () => {
+    await service.stop();
+    for (const work of cleanup) { await work(); }
+  });
   return { service, record: await service.create({ cwd: storage.root }) };
 }
+
+test('native MCP forms and URL decisions return typed responses once and retire resolved numeric request IDs', async t => {
+  const { service, record } = await fixture(t);
+  await service.send(record.id, 'native input');
+  const { engine } = service.engines.get(record.id);
+  for (const [index, decision] of ['accept', 'decline', 'cancel'].entries()) {
+    const id = index;
+    engine.onEvent({ id, method: 'mcpServer/elicitation/request', params: {
+      threadId: 'native-thread', turnId: 'native-turn', serverName: 'fixture', mode: 'form', message: 'Input',
+      requestedSchema: { type: 'object', properties: { enabled: { type: 'boolean' }, count: { type: 'integer' } }, required: ['enabled'] }
+    } });
+    if (decision === 'accept') { assert.throws(() => service.elicit(record.id, id, decision, { enabled: 'false' }), /格式/); }
+    service.elicit(record.id, id, decision, { enabled: false, count: 0 });
+    assert.deepEqual(engine.response, { id, result: { action: decision,
+      ...(decision === 'accept' ? { content: { enabled: false, count: 0 } } : {}) } });
+    assert.throws(() => service.elicit(record.id, id, decision, {}), /失效/);
+    assert.equal((await service.read(record.id)).events.at(-1).params.answers, undefined);
+  }
+  engine.onEvent({ id: 44, method: 'mcpServer/elicitation/request', params: {
+    threadId: 'native-thread', mode: 'url', url: 'https://example.com/auth', elicitationId: 'fixture', message: 'Authorize'
+  } });
+  service.elicit(record.id, 44, 'accept');
+  assert.deepEqual(engine.response, { id: 44, result: { action: 'accept' } });
+  engine.onEvent({ id: 45, method: 'mcpServer/elicitation/request', params: { mode: 'url' } });
+  engine.onEvent({ method: 'serverRequest/resolved', params: { threadId: 'native-thread', requestId: 45 } });
+  assert.throws(() => service.elicit(record.id, 45, 'accept'), /失效/);
+  assert.equal((await service.read(record.id)).events.at(-1).method, 'serverRequest/resolved');
+});
+
+test('MCP input expires with its turn and cannot masquerade as tool approval', async t => {
+  const { service, record } = await fixture(t);
+  await service.send(record.id, 'native input');
+  const { engine } = service.engines.get(record.id);
+  engine.onEvent({ id: 'expired', method: 'mcpServer/elicitation/request', params: {
+    threadId: 'native-thread', turnId: 'native-turn', mode: 'url'
+  } });
+  engine.onEvent({ method: 'turn/completed', params: { threadId: 'native-thread', turn: { id: 'native-turn', status: 'completed' } } });
+  assert.throws(() => service.elicit(record.id, 'expired', 'accept'), /失效/);
+  engine.onEvent({ id: 'approval', method: 'mcpServer/elicitation/request', params: {
+    mode: 'form', _meta: { codex_approval_kind: 'mcp_tool_call' }
+  } });
+  assert.throws(() => service.elicit(record.id, 'approval', 'accept', {}), /失效/);
+});
+
+test('child completion and stale turns cannot finish or interrupt the active parent conversation', async t => {
+  const { service, record } = await fixture(t);
+  await service.send(record.id, 'delegate work');
+  const { engine } = service.engines.get(record.id);
+  for (const [threadId, id, status] of [
+    ['child-thread', 'child-turn', 'completed'], ['child-thread', 'child-turn', 'failed'],
+    ['native-thread', 'previous-turn', 'completed']
+  ]) {
+    engine.onEvent({ method: 'turn/completed', params: { threadId, turn: { id, rootTurnId: 'native-turn', status } } });
+    const current = await service.read(record.id);
+    assert.equal(current.state, 'running');
+    assert.equal(current.turnId, 'native-turn');
+  }
+  engine.onEvent({ id: 42, method: 'item/tool/requestUserInput', params: {
+    threadId: 'child-thread', turnId: 'child-turn', questions: [{ id: 'scope', question: '确认范围？' }]
+  } });
+  assert.ok((await service.read(record.id)).events.some(event => event.id === 42));
+  engine.onEvent({ method: 'turn/completed', params: {
+    threadId: 'native-thread', turn: { id: 'native-turn', status: 'completed' }
+  } });
+  assert.equal((await service.read(record.id)).state, 'idle');
+});
+
+test('stream persistence coalesces queued snapshots and flushes updates received during a write', async () => {
+  const started = deferred();
+  const release = deferred();
+  const saved = [];
+  const service = new Conversations({ pluginId: 'ai-test', storage: { async writeJson(key, value) {
+    saved.push(value);
+    if (saved.length === 1) {
+      started.resolve();
+      await release.promise;
+    }
+  } } });
+  const record = { id: '00000000-0000-4000-8000-000000000001', events: [] };
+  const pending = [];
+  for (let index = 0; index < 100; index += 1) {
+    record.events.push({ sequence: index });
+    pending.push(service.persist(record));
+  }
+  await started.promise;
+  record.events.push({ sequence: 100 });
+  pending.push(service.persist(record));
+  release.resolve();
+  await Promise.all(pending);
+  assert.equal(saved.filter(value => value.id).length, 2);
+  assert.equal(saved[0].events.length, 100);
+  assert.deepEqual(saved[1].events, record.events);
+  assert.equal(service.pendingWrites.size, 0);
+});
+
+test('a slow conversation write does not block another conversation and stop drains pending events', { timeout: 1000 }, async () => {
+  const started = deferred();
+  const release = deferred();
+  const saved = [];
+  const first = { id: '00000000-0000-4000-8000-000000000001', events: [] };
+  const second = { id: '00000000-0000-4000-8000-000000000002', events: [] };
+  const service = new Conversations({ pluginId: 'ai-test', ownProcesses() {}, storage: { async writeJson(key, value) {
+    if (value.id === first.id) {
+      started.resolve();
+      await release.promise;
+    }
+    saved.push(value);
+  } } });
+  const writing = service.persist(first);
+  await started.promise;
+  let stopping;
+  try {
+    await service.persist(second);
+    assert.equal(saved[0].id, second.id);
+    let stopped = false;
+    stopping = service.stop().then(() => { stopped = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(stopped, false);
+  } finally {
+    release.resolve();
+  }
+  await stopping;
+  await writing;
+  assert.equal(saved.filter(value => value.id).length, 2);
+});
+
+test('failed conversation persistence rejects callers and allows the latest state to be retried', async () => {
+  let fail = true;
+  let saved;
+  const service = new Conversations({ pluginId: 'ai-test', storage: { async writeJson(key, value) {
+    if (fail) { throw Error('disk full'); }
+    saved = value;
+  } } });
+  const record = { id: '00000000-0000-4000-8000-000000000001', events: [] };
+  const results = await Promise.allSettled([service.persist(record), service.persist(record)]);
+  assert.equal(results.every(result => result.status === 'rejected' && result.reason.message === 'disk full'), true);
+  fail = false;
+  record.events.push({ sequence: 1 });
+  await service.persist(record);
+  assert.deepEqual(saved.events, record.events);
+  assert.equal(service.pendingWrites.size, 0);
+});
 
 test('stop closes an engine during startup and prevents the pending send from starting a turn', async t => {
   const started = deferred();
   const release = deferred();
   const instances = [];
   let gatewayClosed = false;
+  let nativeClosed = false;
   class SlowEngine extends Engine {
     constructor(options) { super(options); instances.push(this); }
     async start() { started.resolve(); await release.promise; }
     close() { this.closed = true; }
   }
   const { service, record } = await fixture(t, { Engine: SlowEngine,
+    createNativeMcp: async () => ({ connection: { close: async () => { nativeClosed = true; } }, args: [] }),
     createGateway: () => ({ ...gateway(), close: async () => { gatewayClosed = true; } }) });
   const sending = service.send(record.id, 'hello');
   const rejected = assert.rejects(sending, /关闭/);
@@ -83,6 +231,7 @@ test('stop closes an engine during startup and prevents the pending send from st
   await rejected;
   assert.equal(instances[0].closed, true);
   assert.equal(gatewayClosed, true);
+  assert.equal(nativeClosed, true);
   assert.equal(service.engines.size, 0);
   assert.equal(instances[0].calls.some(call => call.method === 'turn/start'), false);
 });
@@ -143,7 +292,7 @@ test('catalog changes reconnect the next turn to the same thread and retire old 
   assert.equal(instances[0].closed, true);
   assert.equal(gateways[0].closed, true);
   assert.deepEqual(instances[1].calls[0], { method: 'thread/resume', params: { threadId: 'native-thread', cwd: record.cwd } });
-  assert.equal(service.read(record.id).events.filter(event => event.method === 'user/message').length, 3);
+  assert.equal((await service.read(record.id)).events.filter(event => event.method === 'user/message').length, 3);
 });
 
 test('stop during account initialization closes it and prevents account requests', async t => {
@@ -189,4 +338,108 @@ test('enabling capture reconnects only the selected next turn and resumes the ex
   assert.equal(engines[1].calls[0].method, 'thread/resume');
   assert.equal(engines[1].calls[0].params.threadId, 'native-thread');
   assert.ok(launches[1].args.includes('capture=true'));
+});
+
+
+test('conversation passes its pinned MCP selection to the gateway, including an empty selection', async t => {
+  const selection = { mode: 'selected', services: [] };
+  let received;
+  const { service, record } = await fixture(t, {
+    runtime: { ...runtime, launch: async () => ({ ...await runtime.launch(), launchSettings: { mcp: selection } }) },
+    createGateway: options => { received = options.selection; return gateway(); }
+  });
+  await service.send(record.id, 'hello');
+  assert.deepEqual(received, selection);
+  assert.equal(service.engines.get(record.id).engine.calls[0].params.approvalPolicy, 'on-request');
+});
+
+
+test('workflow threads start and resume with full access without changing ordinary settings', async t => {
+  const approvalPolicy = { granular: { sandbox_approval: false, rules: false, skill_approval: false,
+    request_permissions: false, mcp_elicitations: true } };
+  const selections = [];
+  const { service, record } = await fixture(t, {
+    runtime: { ...runtime, launch: async () => ({ ...await runtime.launch(), launchSettings: { mcp: { mode: 'selected', services: [] } } }) },
+    createGateway: options => { selections.push(options.selection); return gateway(); }
+  });
+  record.task = { kind: 'plan', background: { authorizationId: 'lease' } };
+  await service.connect(record);
+  const active = service.engines.get(record.id);
+  assert.deepEqual(active.engine.calls[0], { method: 'thread/start', params: {
+    cwd: record.cwd, approvalPolicy, sandbox: 'danger-full-access'
+  } });
+  assert.equal(selections[0], undefined);
+  await active.gateway.close();
+  active.engine.close();
+  service.engines.delete(record.id);
+  await service.connect(record);
+  assert.deepEqual(service.engines.get(record.id).engine.calls[0], { method: 'thread/resume', params: {
+    threadId: record.threadId, cwd: record.cwd, approvalPolicy, sandbox: 'danger-full-access'
+  } });
+});
+
+test('native MCP connection is reused between turns and closes only with its owning conversation', async t => {
+  const connections = [];
+  const launches = [];
+  class NativeEngine extends Engine {
+    async start(launch) { launches.push(launch); }
+  }
+  const { service, record } = await fixture(t, { Engine: NativeEngine, createNativeMcp: async record => {
+    const connection = { id: record.id, refreshed: 0, closed: false,
+      async refresh() { this.refreshed++; }, async close() { this.closed = true; } };
+    connections.push(connection);
+    return { connection, args: ['-c', 'mcp_servers.fixture.url="http://localhost/native"'] };
+  } });
+  await service.send(record.id, 'first');
+  assert.ok(launches[0].args.includes('mcp_servers.fixture.url="http://localhost/native"'));
+  const first = service.engines.get(record.id);
+  first.engine.onEvent({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+  await service.send(record.id, 'second');
+  assert.equal(connections.length, 1);
+  assert.equal(connections[0].refreshed, 1);
+  const peer = await service.create({ cwd: record.cwd });
+  await service.send(peer.id, 'peer');
+  first.engine.onExit();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(connections[0].closed, true);
+  assert.equal(connections[1].closed, false);
+  assert.equal(service.engines.has(peer.id), true);
+  await service.stop();
+  assert.equal(connections[1].closed, true);
+});
+
+test('native MCP connection and capability gateway both close when engine initialization fails', async t => {
+  let nativeClosed = false;
+  let gatewayClosed = false;
+  class FailingEngine extends Engine {
+    async start() { throw Error('native initialization failed'); }
+  }
+  const { service, record } = await fixture(t, { Engine: FailingEngine,
+    createNativeMcp: async () => ({ connection: { close: async () => { nativeClosed = true; } }, args: [] }),
+    createGateway: () => ({ ...gateway(), close: async () => { gatewayClosed = true; } }) });
+  await assert.rejects(service.send(record.id, 'first'), /native initialization failed/);
+  assert.equal(nativeClosed, true);
+  assert.equal(gatewayClosed, true);
+  assert.equal(service.engines.size, 0);
+});
+
+test('manual reconnect is deferred during a turn and resumes history exactly once before the next user input', async t => {
+  const { service, record } = await fixture(t);
+  t.after(() => service.stop());
+  await service.send(record.id, 'first');
+  const original = service.engines.get(record.id).engine;
+  assert.deepEqual(await service.reconnect(record.id), { pending: true });
+  assert.equal(service.engines.get(record.id).engine, original);
+  assert.equal(original.calls.filter(call => call.method === 'turn/start').length, 1);
+  original.onEvent({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+  await service.send(record.id, 'second');
+  const replacement = service.engines.get(record.id).engine;
+  assert.notEqual(replacement, original);
+  assert.equal(replacement.calls[0].method, 'thread/resume');
+  assert.equal(replacement.calls[0].params.threadId, 'native-thread');
+  assert.equal(replacement.calls.filter(call => call.method === 'turn/start').length, 1);
+  replacement.onEvent({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+  assert.deepEqual(await service.reconnect(record.id), { pending: false });
+  assert.notEqual(service.engines.get(record.id).engine, replacement);
+  assert.equal(service.engines.get(record.id).engine.calls.filter(call => call.method === 'turn/start').length, 0);
 });

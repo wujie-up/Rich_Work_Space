@@ -95,9 +95,9 @@ export class SlsClient {
   close() { this.agent.destroy(); }
 
   // Bound response memory and never pass upstream error bodies or signed headers back to the agent.
-  request(resource, params, project) {
+  request(resource, params, project, endpoint = this.config.endpoint) {
     return new Promise((resolve, reject) => {
-      const req = https.get({ hostname: `${project}.${this.config.endpoint}`, ...this.connection, path: resource + '?' + new URLSearchParams(params), agent: this.agent,
+      const req = https.get({ hostname: `${project}.${endpoint}`, ...this.connection, path: resource + '?' + new URLSearchParams(params), agent: this.agent,
         headers: signedHeaders(this.config, resource, params) }, res => {
         const chunks = [];
         let size = 0;
@@ -120,21 +120,25 @@ export class SlsClient {
     const logstore = input.logstore === undefined ? this.config.logstore : input.logstore;
     if (typeof project !== 'string' || !/^[a-z0-9_-]+$/.test(project)) { throw invalid('请指定有效 Project'); }
     if (typeof logstore !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(logstore)) { throw invalid('无效 Logstore'); }
+    if (input.region !== undefined && (typeof input.region !== 'string' || !/^[a-z]{2}(?:-[a-z0-9]+)+$/.test(input.region))) {
+      throw invalid('请指定有效地域，如 cn-hongkong 或 us-west-1');
+    }
+    const endpoint = input.region === undefined ? this.config.endpoint : `${input.region}.log.aliyuncs.com`;
     const started = Date.now();
     let response;
     let attempts = 0;
     // Retry only incomplete results, preserving the exact first query time range and pagination.
     do {
       attempts++;
-      try { response = await this.request(`/logstores/${logstore}`, params, project); }
+      try { response = await this.request(`/logstores/${logstore}`, params, project, endpoint); }
       catch (error) {
         if (!['ECONNRESET', 'EPIPE'].includes(error.code)) { throw error; }
-        response = await this.request(`/logstores/${logstore}`, params, project);
+        response = await this.request(`/logstores/${logstore}`, params, project, endpoint);
       }
       this.queries++;
     } while (response.status === 200 && response.headers['x-log-progress'] === 'Incomplete' && attempts < 3);
     const secrets = [this.config.accessKeyId, this.config.accessKeySecret, this.config.securityToken];
-    const metadata = { project, logstore, endpoint: this.config.endpoint,
+    const metadata = { project, logstore, endpoint,
       from: params.from, to: params.to, offset: Number(params.offset), limit: Number(params.line),
       request_id: response.headers['x-log-requestid'], elapsed_ms: Date.now() - started, attempts };
     if (response.status !== 200) {
@@ -152,7 +156,8 @@ export const queryTool = { name: 'sls_query', description: '只读查询阿里�
     term: { type: 'string' }, query: { type: 'string' }, minutes: { type: 'integer', minimum: 1, default: 15 },
     from: { type: ['string', 'integer'], description: 'Unix秒或带时区ISO时间' }, to: { type: ['string', 'integer'] },
     lines: { type: 'integer', minimum: 1, maximum: 100, default: 20 }, offset: { type: 'integer', minimum: 0 },
-    project: { type: 'string', description: '查询目标 Project；省略时使用服务默认值。支持当前区域内凭据有权访问的项目' },
+    region: { type: 'string', pattern: '^[a-z]{2}(?:-[a-z0-9]+)+$', description: '本次查询地域，如 cn-hongkong（ai-saas）或 us-west-1；省略时沿用服务配置的地域，不自动发现' },
+    project: { type: 'string', description: '查询目标 Project；省略时使用服务默认值。跨地域查询时同时指定 region，凭据必须具备目标项目权限' },
     logstore: { type: 'string', description: '查询目标 Logstore；省略时使用服务默认值' }
   }, additionalProperties: false }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } };
 
@@ -169,7 +174,7 @@ export function serve(client, input = process.stdin, output = process.stdout) {
     if (message.id === undefined) { return; }
     const reply = result => send({ jsonrpc: '2.0', id: message.id, result });
     if (message.method === 'initialize') {
-      reply({ protocolVersion: message.params?.protocolVersion || '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'sls-readonly', version: '1.1.0' } }); return;
+      reply({ protocolVersion: message.params?.protocolVersion || '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'sls-readonly', version: '1.2.0' } }); return;
     }
     if (message.method === 'ping') { reply({}); return; }
     if (message.method === 'tools/list') { reply({ tools: [queryTool] }); return; }

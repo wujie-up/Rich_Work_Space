@@ -55,3 +55,16 @@ test('a failed local skill copy can be retried after repairing the source', asyn
   await manager.prepareSources('codex', profile);
   assert.equal(await readFile(join(profile, 'codex/skills/local-0-example/SKILL.md'), 'utf8'), 'keep');
 });
+
+
+test('partial engine settings retain imports and provider selection', async t => {
+  const storage = await temporaryStore(t);
+  const manager = new EngineManager({ root: storage.root, tar: {} });
+  await manager.configure({ defaultEngine: 'claude', engines: { codex: { reuseSkills: true, reuseRules: true } } });
+  await manager.configure({ engines: { codex: { providerId: 'example', mcp: { mode: 'selected', services: [] } } } });
+  const config = await manager.config();
+  assert.equal(config.defaultEngine, 'claude');
+  assert.equal(config.engines.codex.reuseSkills, true);
+  assert.equal(config.engines.codex.providerId, 'example');
+  assert.deepEqual(config.engines.codex.mcp, { mode: 'selected', services: [] });
+});

@@ -6,13 +6,13 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { AppServer } from './app-server.js';
 import { ENGINE_PIN } from './engine-pin.js';
-import { managedPlatform, downloadEngine, engineNetworkEnvironment } from '../os/index.js';
+import { managedPlatform, downloadEngine, engineNetworkEnvironment, engineExecutablePath } from '../os/index.js';
 
 const execute = promisify(execFile);
 export function isolatedEnvironment(profile) {
   return { HOME: join(profile, 'home'), CODEX_HOME: join(profile, 'codex'), CLAUDE_CONFIG_DIR: join(profile, 'claude'),
     XDG_CONFIG_HOME: join(profile, 'config'), XDG_CACHE_HOME: join(profile, 'cache'), XDG_DATA_HOME: join(profile, 'data'),
-    TMPDIR: join(profile, 'tmp'), PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', RUST_LOG: 'warn,codex_core::session=info' };
+    TMPDIR: join(profile, 'tmp'), PATH: engineExecutablePath(), LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', RUST_LOG: 'warn,codex_core::session=info' };
 }
 
 export async function prepareProfile(profile) {
@@ -24,7 +24,9 @@ export async function prepareProfile(profile) {
   return env;
 }
 
-export const managedArgs = ['-c', 'cli_auth_credentials_store="file"', '-c', 'shell_environment_policy.inherit="none"'];
+// Inherit the managed environment so native tools keep PATH, isolated homes and proxies, excluding provider/MCP secrets.
+export const managedArgs = ['-c', 'cli_auth_credentials_store="file"', '-c', 'shell_environment_policy.inherit="all"',
+  '-c', 'shell_environment_policy.ignore_default_excludes=false'];
 
 async function probeNative(command, pin, profile) {
   const env = await prepareProfile(profile);
@@ -60,11 +62,23 @@ export class ManagedRuntime {
     this.probe ||= probeNative;
   }
 
-  async status() {
+  async status(runtimeId) {
     try {
-      const index = JSON.parse(await readFile(join(this.root, 'runtimes', 'index.json'), 'utf8'));
+      if (runtimeId && !/^[a-zA-Z0-9._-]+$/.test(runtimeId)) { throw Error('引擎版本 ID 无效'); }
+      // A pinned historical version survives removal of the current installation pointer.
+      let index;
+      try {
+        const file = runtimeId ? join(this.root, 'runtimes', runtimeId, 'manifest.json') : join(this.root, 'runtimes', 'index.json');
+        index = JSON.parse(await readFile(file, 'utf8'));
+      } catch (error) {
+        if (!runtimeId || error.code !== 'ENOENT') { throw error; }
+        index = JSON.parse(await readFile(join(this.root, 'runtimes', 'index.json'), 'utf8'));
+        if (index.runtimeId !== runtimeId) { return { state: 'missing', pin: this.pin }; }
+      }
       const command = join(this.root, 'runtimes', index.runtimeId, index.entry);
-      if (index.runtimeId !== this.pin.runtimeId || index.sha256 !== this.pin.sha256 || !(await stat(command)).isFile()) {
+      if (!/^[a-zA-Z0-9._-]+$/.test(index.runtimeId) || !/^[a-f0-9]{64}$/.test(index.sha256)
+        || !index.entry || posix.normalize(index.entry) !== index.entry || index.entry.startsWith('/')
+        || index.entry.split('/').includes('..') || !(await stat(command)).isFile()) {
         throw Error('引擎记录损坏');
       }
       return { ...index, state: 'ready', command, pin: this.pin };
@@ -117,11 +131,25 @@ export class ManagedRuntime {
       await this.probe(command, this.pin, join(staging, 'probe-profile'));
       const target = join(runtimes, this.pin.runtimeId);
       // A fixed version is immutable: successful repeat imports reuse it, never replace an active runtime.
-      const existing = await this.status();
-      if (existing.state !== 'ready') {
-        await rename(payload, target);
-      }
+      const existing = await stat(target).catch(error => {
+        if (error.code === 'ENOENT') { return null; }
+        throw error;
+      });
       const index = { ...this.pin, installedAt: new Date().toISOString(), state: 'ready' };
+      if (!existing) {
+        await writeFile(join(payload, 'manifest.json'), JSON.stringify(index, null, 2), { mode: 0o600 });
+        await rename(payload, target);
+      } else {
+        // Repeated imports verify the installed executable too; an old directory must not bypass validation.
+        await this.probe(join(target, this.pin.entry), this.pin, join(staging, 'existing-probe'));
+        await writeFile(join(target, 'manifest.json'), JSON.stringify(index, null, 2), { mode: 0o600 });
+      }
+      // Preserve pre-upgrade installations too: older releases stored their manifest only in the active index.
+      const previous = await this.status();
+      if (previous.state === 'ready' && previous.runtimeId !== index.runtimeId) {
+        const { command: previousCommand, pin: previousPin, ...manifest } = previous;
+        await writeFile(join(runtimes, previous.runtimeId, 'manifest.json'), JSON.stringify(manifest, null, 2), { mode: 0o600 });
+      }
       const next = join(staging, 'index.json');
       await writeFile(next, JSON.stringify(index, null, 2), { mode: 0o600 });
       await rename(next, join(runtimes, 'index.json'));
@@ -164,8 +192,8 @@ export class ManagedRuntime {
     }
   }
 
-  async launch(profileId = 'default') {
-    const runtime = await this.status();
+  async launch(profileId = 'default', runtimeId) {
+    const runtime = await this.status(runtimeId);
     if (runtime.state !== 'ready') {
       throw Error('请先在 AI 对话中安装受管引擎');
     }
@@ -173,7 +201,7 @@ export class ManagedRuntime {
       throw Error('无效运行配置 ID');
     }
     const profile = join(this.root, 'profiles', profileId);
-    return { command: runtime.command, args: this.pin.format === 'binary' ? [] : [...managedArgs], env: { ...await prepareProfile(profile), ...await engineNetworkEnvironment() },
+    return { command: runtime.command, args: runtime.format === 'binary' ? [] : [...managedArgs], env: { ...await prepareProfile(profile), ...await engineNetworkEnvironment() },
       runtimeId: runtime.runtimeId, runtimeVersion: runtime.version, profileId, isolated: true };
   }
 }

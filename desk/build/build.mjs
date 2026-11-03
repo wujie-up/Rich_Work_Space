@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { buildWeb } from '../../web/build/build.mjs';
 import { mkdir, copyFile, readdir, readFile, access, cp, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { basename, join } from 'node:path';
@@ -12,6 +13,7 @@ async function bundle(entry, resource, output) {
 }
 
 await bundle('desk/src/renderer/app.js', 'desk/src/resource/index.html', 'desk/dist/renderer');
+await buildWeb();
 // Discover domain packages instead of importing a particular plugin into the host bundle.
 const packages = process.argv.includes('--desk-only') ? [] : await readdir('plugin-dev', { withFileTypes: true });
 for (const entry of packages) {

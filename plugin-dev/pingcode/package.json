@@ -1,0 +1,10 @@
+{
+  "name": "pingcode",
+  "version": "0.4.3",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "playwright-core": "1.64.1",
+    "ws": "8.22.0"
+  }
+}

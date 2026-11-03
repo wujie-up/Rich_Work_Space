@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cleanApplicationEntries } from '../src/main/os/mac/installation.js';
 
-const official = '/Applications/DeckPg.app';
-const build = '/project/releases.noindex/mac-arm64/DeckPg.app';
+const official = '/Applications/DeskPG.app';
+const build = '/project/releases.noindex/mac-arm64/DeskPG.app';
 const registration = (path, id = 'local.workdesk.desktop') => `----------------\npath: ${path} (0x4)\nidentifier: ${id}\n`;
 
-test('installation removes only duplicate DeckPg registrations and verifies Spotlight too', async () => {
+test('installation removes only duplicate DeskPG registrations and verifies Spotlight too', async () => {
   const calls = [];
   let dumps = 0;
   const run = async (command, args) => {

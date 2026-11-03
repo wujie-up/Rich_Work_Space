@@ -1,0 +1,12 @@
+{
+  "name": "work-desk-web-access",
+  "version": "0.1.24",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@number0/iroh": "1.2.0"
+  },
+  "scripts": {
+    "build": "node build/build.mjs"
+  }
+}

@@ -1,7 +1,7 @@
 {
   "id": "ai-agent-sessions",
   "name": "AI Agent 会话",
-  "version": "0.6.8",
+  "version": "0.6.151",
   "type": "application",
   "showIcon": true,
   "loadOnStartup": true,
@@ -36,7 +36,8 @@
   "requiredHostFeatures": [
     "desk.capabilities.v1",
     "desk.entries.v1",
-    "desk.settings.v1"
+    "desk.settings.v1",
+    "desk.channels.v1"
   ],
   "settings": {
     "entry": "dist/renderer/settings.html"

@@ -4,6 +4,8 @@ import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
+import { EngineReleases } from './engine-releases.js';
+import { Providers } from './providers.js';
 import { ManagedRuntime } from './managed-runtime.js';
 import { ENGINE_PIN, CLAUDE_PIN } from './engine-pin.js';
 import { readLocalCredential } from '../os/index.js';
@@ -20,6 +22,8 @@ export class EngineManager {
     this.runtimes = new Map(Object.entries(pins).map(([id, pin]) => [id, new ManagedRuntime({
       root: id === 'codex' ? this.root : join(this.root, 'engines', id), tar: this.tar, pin
     })]));
+    this.releases = new EngineReleases();
+    this.providers = new Providers({ root: this.root });
     this.installations = new Map();
     this.sourceWrites = new Map();
   }
@@ -44,12 +48,22 @@ export class EngineManager {
   }
 
   async configure(input) {
-    this.runtime(input.defaultEngine);
     const config = await this.config();
-    config.defaultEngine = input.defaultEngine;
+    if (input.defaultEngine) {
+      this.runtime(input.defaultEngine);
+      config.defaultEngine = input.defaultEngine;
+    }
     for (const [id, value] of Object.entries(input.engines || {})) {
       this.runtime(id);
-      config.engines[id] = { reuseSkills: value.reuseSkills === true, reuseRules: value.reuseRules === true };
+      if (value.mcp && (!['all', 'selected'].includes(value.mcp.mode) || !Array.isArray(value.mcp.services))) {
+        throw Error('MCP 服务选择无效');
+      }
+      const changes = Object.fromEntries(Object.entries(value).filter(([key]) =>
+        ['reuseSkills', 'reuseRules', 'providerId', 'mcp'].includes(key)));
+      if (changes.mcp?.services.some(service => typeof service.pluginId !== 'string' || typeof service.serviceId !== 'string')) {
+        throw Error('MCP 服务标识无效');
+      }
+      config.engines[id] = { ...config.engines[id], ...changes };
     }
     await this.writePrivate(join(this.root, 'engines.json'), JSON.stringify(config, null, 2));
     return config;
@@ -60,11 +74,18 @@ export class EngineManager {
       installation: this.installations.get(id) || { state: 'idle' }, sources: this.sources(id) })));
   }
 
-  install(id, archive) {
+  install(id, archive, version) {
     const runtime = this.runtime(id);
     if (this.installations.get(id)?.state !== 'installing') {
       this.installations.set(id, { state: 'installing' });
-      runtime.install(archive).then(() => this.installations.set(id, { state: 'complete' }), error => {
+      const install = async () => {
+        const pin = version ? await this.releases.resolve(id, version) : runtime.pin;
+        const installer = new ManagedRuntime({ root: runtime.root, tar: this.tar, pin });
+        runtime.installing = installer.install(archive);
+        try { return await runtime.installing; }
+        finally { runtime.installing = null; }
+      };
+      install().then(() => this.installations.set(id, { state: 'complete' }), error => {
         this.installations.set(id, { state: 'failed', error: error.message });
       });
     }
@@ -73,10 +94,10 @@ export class EngineManager {
 
   async remove(id) {
     const runtime = this.runtime(id);
-    if (runtime.installing) {
+    if (runtime.installing || this.installations.get(id)?.state === 'installing') {
       throw Error('引擎安装中，请稍后再试');
     }
-    await rm(join(runtime.root, 'runtimes'), { recursive: true, force: true });
+    await rm(join(runtime.root, 'runtimes', 'index.json'), { force: true });
     this.installations.delete(id);
     console.info('[ai:runtime-removed]', { engineId: id });
   }
@@ -202,7 +223,7 @@ export class EngineManager {
   }
 
   async account(method, params = {}) {
-    const launch = await this.launch(undefined, 'claude');
+    const launch = await this.launch(undefined, 'claude', { account: true });
     if (method === 'account/read') {
       let stdout;
       try {
@@ -261,11 +282,17 @@ export class EngineManager {
     child.once('close', () => clearTimeout(escalation));
   }
 
-  async launch(profileId, id) {
+  async launch(profileId, id, options = {}) {
     id ||= (await this.config()).defaultEngine;
     const runtime = this.runtime(id);
-    const launch = await runtime.launch(profileId);
+    const launch = await runtime.launch(profileId, options.runtimeId);
     await this.prepareSources(id, join(runtime.root, 'profiles', launch.profileId));
-    return { ...launch, engineId: id };
+    const settings = (await this.config()).engines[id] || {};
+    const providerId = options.snapshot ? options.snapshot.provider?.id : settings.providerId;
+    const provider = options.account ? { args: [], env: {}, provider: null }
+      : await this.providers.resolve(id, providerId, options.snapshot?.provider);
+    const launchSettings = options.snapshot || { provider: provider.provider, mcp: settings.mcp || { mode: 'all', services: [] } };
+    return { ...launch, args: [...launch.args, ...provider.args], env: { ...launch.env, ...provider.env },
+      engineId: id, launchSettings };
   }
 }

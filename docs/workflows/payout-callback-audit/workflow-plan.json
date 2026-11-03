@@ -1,0 +1,87 @@
+{
+  "name": "每日放款未回调订单核查",
+  "state": "implemented_pending_user_import_and_enable",
+  "scenario": "财务事件与旧系统放款状态双重核对的定时只读巡检",
+  "primary_problem": "财务未回调标记不等于旧系统仍在等待回调，必须排除已落成终态的订单并保证查询不漏页；业务步骤必须在画布独立执行且可观察，以定位候选到真实未回调的筛选过程",
+  "schedule": {
+    "timezone": "Asia/Shanghai",
+    "localTime": "10:00",
+    "frequency": "daily",
+    "enabled": false
+  },
+  "nodes": [
+    {
+      "id": "snapshot",
+      "action": "通过 metabase_query 查询财务库当前时间和最大事件ID，固定本轮窗口"
+    },
+    {
+      "id": "financial",
+      "action": "按事件ID游标串行读取全部财务候选，单页100行，不使用OFFSET",
+      "queryBuilder": "financialPage"
+    },
+    {
+      "id": "batch",
+      "action": "按国家编码及旧渠道proxy_id分组，每批至多100个去重申请单ID"
+    },
+    {
+      "id": "verify",
+      "action": "按国家逐批串行查询 loan_order_info JOIN payment_record，status=2口径已确认，按支付记录ID继续分页",
+      "queryBuilder": "countryPage"
+    },
+    {
+      "id": "merge",
+      "action": "按国家+申请单ID+proxy_id合并merchant_no；按国家+申请单ID+channel_code+proxy_id+payment_record_id去重，同记录多条财务事件取最早创建时间"
+    },
+    {
+      "id": "markdown",
+      "action": "按渠道、国家输出申请单ID、创建时间、merchant_no三列的时间戳MD，删除查询追溯正文，内部保留查询记录"
+    },
+    {
+      "id": "feishu",
+      "action": "独立可修改签名机器人配置，以JSON2.0原生表格卡片完整分段发送；每表10行、每卡5表，失败不自动重试"
+    }
+  ],
+  "requiredColumns": [
+    "老系统申请单ID",
+    "国家编码",
+    "创建时间",
+    "渠道名称",
+    "渠道ID(proxy_id)",
+    "merchant_no"
+  ],
+  "traceColumns": [
+    "channel_code",
+    "loan_order_id",
+    "payment_record_id",
+    "as_of"
+  ],
+  "completeness": {
+    "pageSize": 100,
+    "concurrency": 1,
+    "fullPage": "即使truncated=true也不丢弃本页，使用末行ID取下一页，直到空页或不足100行且未截断",
+    "failure": "未知国家映射、查询错误、分页不前进、未能证明完整、字段缺失均报失败，不以零订单代替",
+    "databaseWrites": false
+  },
+  "limitations": [
+    "导入按既有协议重置为手动，需在工作台选择每日固定时间10:00并启用保存",
+    "首次运行需通过工作台Metabase只读范围授权；授权记忆依赖插件内容和服务范围",
+    "桌面和work-flow后台需运行，停机错过时点不补跑",
+    "TH结构探测曾超时，出现未知国家候选将生成未完成报告并失败，不猜测映射",
+    "跨数据库没有同一事务快照，报告保留财务基准时间与查询追溯",
+    "飞书测试通知已使用用户配置验证成功；完整定时报表投递仍需升级插件并导入新版流程"
+  ],
+  "displayColumns": [
+    "老系统申请单ID",
+    "创建时间",
+    "渠道订单号"
+  ],
+  "timeout": {
+    "node": "financial",
+    "parameter": "timeoutHours",
+    "default": 6,
+    "unit": "hour",
+    "min": 1,
+    "max": 744,
+    "appliesTo": "next run"
+  }
+}

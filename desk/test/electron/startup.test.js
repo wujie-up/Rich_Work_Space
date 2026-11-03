@@ -71,6 +71,7 @@ test('startup: activation events wait for desktop protocol and IPC readiness', {
       }
     }
     export function deactivate() {}`);
+  await writeFile(join(data, 'plugins.json'), JSON.stringify([{ ...JSON.parse(await readFile(join(directory, 'plugin.json'), 'utf8')), state: 'enabled' }]));
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   const executablePath = process.env.DESK_STARTUP_EXECUTABLE || require('electron');
@@ -94,10 +95,13 @@ test('startup: activation events wait for desktop protocol and IPC readiness', {
     app.emit('second-instance');
     return BrowserWindow.getAllWindows().length;
   });
-  assert.equal(count, 0, 'native activation must not create a window before the host is ready');
+  assert.equal(count, 1, 'the desktop must be usable while a background service is still starting');
+  const earlyPage = await app.firstWindow();
+  await earlyPage.locator('.workspace-label').waitFor();
+  assert.equal((await earlyPage.evaluate(() => workDesk.plugins.list())).find(plugin => plugin.id === 'startup-probe').running, false);
   await writeFile(join(data, 'release'), 'continue');
   const page = await app.firstWindow();
   await page.locator('.workspace-label').waitFor();
-  assert.equal((await page.evaluate(() => workDesk.plugins.list())).find(plugin => plugin.id === 'startup-probe').running, true);
+  await page.waitForFunction(async () => (await workDesk.plugins.list()).find(plugin => plugin.id === 'startup-probe').running);
   assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1);
 });

@@ -1,0 +1,37 @@
+html, body { margin: 0; min-height: 100%; background: var(--desk-control-bg); color: var(--desk-control-text); font: 14px system-ui, sans-serif; }
+main { padding: 24px; max-width: 960px; margin: auto; }
+.toolbar, .row, .actions { display: flex; align-items: center; gap: 8px; }
+.toolbar { justify-content: space-between; flex-wrap: wrap; }
+header.toolbar { position: relative; }
+.toolbar > :first-child, .row > :first-child { flex: 1; min-width: 0; }
+.actions { gap: 2px; }
+.icon-button { display: inline-flex; justify-content: center; align-items: center; width: 40px; height: 40px; flex-shrink: 0; }
+#status { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+#status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--desk-muted); flex-shrink: 0; }
+#status[data-running=true]::before { background: #4b9d76; }
+section { min-width: 0; margin-top: 28px; }
+h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.count { color: var(--desk-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+.device-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; }
+.row { min-height: 48px; padding: 10px 0; border-bottom: 1px solid var(--desk-control-border); }
+.row:last-child { border-bottom: 0; }
+.label, .detail { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail { font-size: 12px; color: var(--desk-muted); margin-top: 5px; }
+.fingerprint { white-space: normal; overflow-wrap: anywhere; color: var(--desk-control-text); }
+.empty { padding: 18px 0; color: var(--desk-muted); font-size: 13px; }
+.risk { margin: 8px 0 0; line-height: 1.7; font-size: 12px; }
+#error { color: var(--danger, #bc3535); white-space: pre-wrap; overflow-wrap: anywhere; }
+#error:empty { display: none; }
+#expiry { color: var(--desk-muted); font-size: 12px; }
+textarea { box-sizing: border-box; width: 100%; margin-top: 8px; resize: vertical; }
+.help { display: inline-flex; }
+.help [role=tooltip] { display: none; position: absolute; top: calc(100% + 6px); right: 0; width: min(300px, calc(100vw - 56px)); box-sizing: border-box; z-index: 1; }
+.help:hover [role=tooltip], .help:focus-within [role=tooltip] { display: block; }
+@media (max-width: 600px) {
+  main { padding: 16px; }
+  .device-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .toolbar { gap: 4px; }
+  header.toolbar > :first-child { flex-basis: 100%; margin-bottom: 6px; }
+  header .actions { margin-left: -8px; }
+  .icon-button { width: 44px; height: 44px; }
+}

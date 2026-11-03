@@ -1,10 +1,12 @@
+import { pageLifecycle, pollVisible } from '../../../../desk/src/resource/page-lifecycle.js';
+import '../../../../desk/src/resource/controls.css';
 import './style.css';
 import { invoke, request, send, collapsed } from './api.js';
 import { format, chartPath } from './format.js';
 
 const root = document.querySelector('#app');
 const metrics = [['cpu', 'CPU'], ['memory', '内存'], ['received', '下载'], ['sent', '上传']];
-let active = true;
+const lifecycle = pageLifecycle();
 let selected = '';
 let sort = 'cpu';
 let latestSnapshot;
@@ -41,9 +43,12 @@ request('storage.getPreferences', []).then(preferences => {
 }).catch(error => { status.textContent = error.message; });
 
 function showSettings() {
-  const interval = el('select', { id: 'interval' }, ...[2, 5, 10].map(value => el('option', { value, text: `${value} 秒` })));
-  const compact = el('input', { id: 'compact', type: 'checkbox' });
-  const save = el('button', { type: 'button', text: '保存设置', onclick: async () => {
+  const interval = el('input', { id: 'interval', type: 'number', min: 1, max: 2147483, step: 1, required: '' });
+  const compact = el('input', { id: 'compact', type: 'checkbox', role: 'switch' });
+  const save = el('button', { type: 'button', class: 'icon-button', title: '保存设置', 'aria-label': '保存设置', onclick: async () => {
+    if (!interval.reportValidity()) {
+      return;
+    }
     save.disabled = true;
     try {
       await invoke('monitor.saveSettings', { interval: Number(interval.value), defaultCollapsed: compact.checked });
@@ -54,8 +59,10 @@ function showSettings() {
       save.disabled = false;
     }
   } });
+  save.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h14l3 3v15H3V3z M7 3v6h10V3 M7 21v-8h10v8"/></svg>';
   root.replaceChildren(el('div', { class: 'settings' },
-    el('label', { for: 'interval', text: '采样间隔' }, interval),
+    el('label', { for: 'interval' }, el('span', { text: '采样间隔' }),
+      el('span', { class: 'interval-field' }, interval, el('span', { text: 's', 'aria-hidden': 'true' }))),
     el('label', { class: 'checkbox', for: 'compact' }, compact, el('span', { text: '默认收起为横条' })),
     help('collapse-help', '收起状态说明', '仅首次显示时使用默认状态；已有面板保留上次状态。'), save, status));
   invoke('monitor.settings').then(settings => {
@@ -170,14 +177,14 @@ function render(snapshot) {
   el('td', { text: `${format('received', stale ? null : row.received)} / ${format('sent', stale ? null : row.sent)}` })))));
   status.textContent = snapshot.error ? `采样中断：${snapshot.error}` : current?.processError || current?.networkError ||
     (!current ? '正在采集…' : !rows.length ? '没有运行中的插件后台' : displayed.cpu === null ? '正在建立采样基线…' :
-      `每 ${snapshot.settings.interval} 秒采样 · ${new Date(current.time).toLocaleTimeString()}`);
+      `每 ${snapshot.settings.interval} s 采样 · ${new Date(current.time).toLocaleTimeString()}`);
   updateDashboard(picker, sorting, cards, table);
 }
 
 async function poll() {
   try {
-    const snapshot = await invoke('monitor.snapshot');
-    if (active) {
+    const snapshot = await invoke('monitor.snapshot', { includeHistory: !collapsed });
+    if (lifecycle.visible()) {
       render(snapshot);
     }
   } catch (error) {
@@ -186,17 +193,12 @@ async function poll() {
       root.append(status);
     }
     send({ type: 'desk:overlay-summary', text: '采样不可用 · 请展开查看' });
-  } finally {
-    if (active) {
-      setTimeout(poll, 1000);
-    }
   }
 }
 
-window.addEventListener('pagehide', () => { active = false; }, { once: true });
 if (location.pathname.endsWith('/settings.html')) {
   showSettings();
 } else {
   root.append(status);
-  poll();
+  pollVisible(lifecycle, poll, 1000);
 }

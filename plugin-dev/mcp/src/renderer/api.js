@@ -1,3 +1,5 @@
+import { pluginHostOrigin } from '../../../../desk/src/resource/plugin-host.js';
+const hostOrigin = pluginHostOrigin();
 const pending = new Map();
 let sequence = 0;
 function request(method, ...args) {
@@ -5,11 +7,11 @@ function request(method, ...args) {
     const id = ++sequence;
     const timer = setTimeout(() => { pending.delete(id); reject(Error('桌面连接超时')); }, 25000);
     pending.set(id, { resolve, reject, timer });
-    parent.postMessage({ type: 'desk:invoke', id, method, args }, 'desk-host://desktop');
+    parent.postMessage({ type: 'desk:invoke', id, method, args }, hostOrigin);
   });
 }
 window.addEventListener('message', event => {
-  if (event.source !== parent || event.origin !== 'desk-host://desktop') { return; }
+  if (event.source !== parent || event.origin !== hostOrigin) { return; }
   const message = event.data;
   if (message?.type === 'desk:theme') { document.documentElement.dataset.theme = message.theme; }
   if (message?.type !== 'desk:result') { return; }
@@ -25,7 +27,7 @@ export async function action(work) {
   status.textContent = '处理中…';
   const buttons = [...document.querySelectorAll('button')].map(button => [button, button.disabled]);
   buttons.forEach(([button]) => { button.disabled = true; });
-  try { await work(); status.textContent = '已完成'; }
+  try { await work(); status.textContent = ''; }
   catch (error) { status.textContent = error.message; }
   finally { buttons.forEach(([button, disabled]) => { button.disabled = disabled; }); }
 }

@@ -48,7 +48,9 @@ export class AppServer {
     // stderr can contain credential-bearing provider errors; keep them out of host logs and UI broadcasts.
     this.child.stderr.resume();
     const result = await this.request('initialize', {
-      clientInfo: { name: 'work_desk_ai', title: 'Work Desk AI', version: '0.5.0' }, capabilities: { experimentalApi: false }
+      clientInfo: { name: 'work_desk_ai', title: 'Work Desk AI', version: '0.5.0' },
+      // Granular approval keeps background MCP user input enabled without granting additional execution permissions.
+      capabilities: { experimentalApi: Boolean(launch.fullyAuthorized) }
     });
     this.send({ method: 'initialized', params: {} });
     return result;
@@ -56,6 +58,9 @@ export class AppServer {
 
   receive(message) {
     if (message.method) {
+      if (message.method === 'serverRequest/resolved') {
+        this.approvals.delete(message.params.requestId);
+      }
       if (message.id !== undefined) {
         this.approvals.add(message.id);
       }

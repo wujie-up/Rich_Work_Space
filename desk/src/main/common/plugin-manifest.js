@@ -18,7 +18,7 @@ export function pluginProperties(manifest) {
   const { type, showIcon, loadOnStartup, background, main, views = [] } = properties;
   // Legacy development declarations remain readable; the removed preview API is no longer exposed.
   const features = ['desk.capabilities.v1', 'desk.entries.v1', 'desk.settings.v1', 'desk.development.v1',
-    'desk.overlays.v1', 'desk.runtime-directory.v1'];
+    'desk.service-transport.v1', 'desk.overlays.v1', 'desk.runtime-directory.v1', 'desk.channels.v1'];
   if (properties.requiredHostFeatures !== undefined && (!Array.isArray(properties.requiredHostFeatures)
     || properties.requiredHostFeatures.some(feature => !features.includes(feature)))) {
     throw fail('INVALID_PACKAGE', '插件需要当前宿主不支持的协议，请先升级工作台');
@@ -55,6 +55,11 @@ export function pluginProperties(manifest) {
   if (views.some(view => view.contributes !== undefined && (!Array.isArray(view.contributes?.entries)
     || view.contributes.entries.some(entry => typeof entry !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(entry))))) {
     throw fail('INVALID_PACKAGE', '插件视图入口必须是 64 字以内的小写字母、数字或连字符');
+  }
+  if (views.some(view => view.contributes?.fileExtensions !== undefined
+    && (!Array.isArray(view.contributes.fileExtensions) || view.contributes.fileExtensions.length > 100
+      || view.contributes.fileExtensions.some(extension => typeof extension !== 'string' || !/^[a-z0-9]{1,16}$/.test(extension))))) {
+    throw fail('INVALID_PACKAGE', 'fileExtensions 必须是小写扩展名列表，不包含点');
   }
   views.forEach(validatePresentation);
   return properties;

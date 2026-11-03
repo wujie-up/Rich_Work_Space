@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "mcp-jenkins": {
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/mcp-jenkins/server.mjs"],
+      "env": {
+        "JENKINS_URL": "http://192.168.3.21:8080/",
+        "JENKINS_USERNAME": "在本机填写账号",
+        "JENKINS_PASSWORD": "在本机填写密码"
+      }
+    }
+  }
+}

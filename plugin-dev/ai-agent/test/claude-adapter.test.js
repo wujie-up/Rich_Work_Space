@@ -9,8 +9,18 @@ test('Claude terminal uses native session IDs, explicit permission and empty sys
   assert.ok(launch.args.includes('--strict-mcp-config'));
   assert.equal(adapter.resolveContext({ sessionDataDir: '/tmp/logs/abc' }), 'abc');
   assert.deepEqual(adapter.buildLaunch({ mode: 'resume', contextId: 'abc' }).args.slice(-2), ['--resume', 'abc']);
-  assert.throws(() => adapter.buildLaunch({ permission: 'unrestricted' }), /权限/);
+  assert.throws(() => adapter.buildLaunch({ permission: 'unknown' }), /权限/);
   assert.throws(() => adapter.buildLaunch({ mode: 'resume' }), /上下文/);
+});
+
+test('Claude maps full access to the native bypass mode for new and restored group windows', () => {
+  const adapter = createClaudeAdapter();
+  assert.ok(adapter.permissionModes.some(mode => mode.id === 'unrestricted'));
+  for (const mode of ['new', 'resume']) {
+    const launch = adapter.buildLaunch({ permission: 'unrestricted', mode, contextId: 'abc', sessionDataDir: '/tmp/logs/abc' });
+    assert.deepEqual(launch.args.slice(0, 2), ['--permission-mode', 'bypassPermissions']);
+    assert.ok(launch.args.includes('--strict-mcp-config'));
+  }
 });
 
 

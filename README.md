@@ -1,4 +1,4 @@
-# DeckPg
+# DeskPG
 
 基于插件的本地 AI 工作台。`desk` 提供桌面、基础黑白主题、插件管理、隔离运行和通用能力协议；AI、MCP、文本、工作流、抓包和资源监控由插件提供。
 
@@ -45,14 +45,14 @@ plugins/market/             插件市场边界，暂未实现在线市场
 
 ## 安装和升级
 
-macOS arm64 产物位于 `desk/dist/releases.noindex/DeckPg-0.1.24-arm64.dmg` 及同名 `.zip`。应用使用自定义图标和本地临时签名，尚未进行 Developer ID 签名及 Apple 公证。
+macOS arm64 产物位于 `desk/dist/releases.noindex/DeskPG-0.1.24-arm64.dmg` 及同名 `.zip`。应用使用自定义图标和本地临时签名，尚未进行 Developer ID 签名及 Apple 公证。
 
-正式安装统一为 `/Applications/DeckPg.app`。从源码更新时先正常退出工作台，再执行：
+正式安装统一为 `/Applications/DeskPG.app`。从源码更新时先正常退出工作台，再执行：
 
 ```sh
 npm run dist:mac
 npm run install:mac
-open /Applications/DeckPg.app
+open /Applications/DeskPG.app
 npm run check:mac-installation
 ```
 

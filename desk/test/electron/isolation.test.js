@@ -6,7 +6,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { launch, configure, create, output, owner, alive, openWorkspace, openConfiguration, toggleTheme } from './helpers.js';
 
 test('isolation: backend SIGKILL and renderer SIGKILL leave desktop and another plugin usable', { timeout: 60000 }, async (t) => {
-  const { app, page, data } = await launch(t);
+  const { app, page, data } = await launch(t, { openPlugin: false });
+  await page.evaluate(id => workDesk.plugins.enable(id), owner);
+  await openWorkspace(page);
   await configure(page);
   const healthy = await create(page, '保持运行的另一个插件');
   await output(page, healthy.id, 'READY 中文');
@@ -22,12 +24,17 @@ test('isolation: backend SIGKILL and renderer SIGKILL leave desktop and another 
   await writeFile(join(source, 'index.html'), '<!doctype html><meta charset="UTF-8"><h1>隔离验证视图</h1>');
   await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, source);
   await page.evaluate(() => workDesk.plugins.install());
+  await page.evaluate(id => workDesk.plugins.enable(id), id);
   const first = await page.evaluate((id) => workDesk.plugins.invoke(id, 'probe.ping', []), id);
   process.kill(first.pid, 'SIGKILL');
-  await page.waitForFunction(async (id) => {
-    const record = (await workDesk.plugins.list()).find((entry) => entry.id === id);
-    return record.state === 'disabled' && !record.operation;
-  }, id);
+  // Poll resolved IPC state; an async waitForFunction predicate passes on the Promise itself.
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const record = await page.evaluate(async id => (await workDesk.plugins.list()).find(entry => entry.id === id), id);
+    if (record.state === 'disabled' && !record.operation) {
+      break;
+    }
+    await delay(25);
+  }
   assert.equal(alive(healthy.pid), true);
   await output(page, healthy.id, 'READY 中文');
   const beforeTheme = await page.locator('html').getAttribute('data-theme');
@@ -91,7 +98,7 @@ test('isolation: backend SIGKILL and renderer SIGKILL leave desktop and another 
 });
 
 test('empty desktop remains usable after all plugins are disabled', { timeout: 60000 }, async (t) => {
-  const { page } = await launch(t);
+  const { page } = await launch(t, { openPlugin: false });
   await page.evaluate(async () => {
     for (const plugin of await workDesk.plugins.list()) {
       if (plugin.state === 'enabled') {

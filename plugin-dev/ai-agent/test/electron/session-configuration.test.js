@@ -1,0 +1,201 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { launch, owner, output } from '../../../../desk/test/electron/helpers.js';
+
+test('shared configuration, initial directory and grid positions persist without replacing terminals', { timeout: 120000 }, async t => {
+  const { version } = JSON.parse(await readFile(resolve('plugin-dev/ai-agent/plugin.json')));
+  const { app, page, data } = await launch(t, { openPlugin: false,
+    prepareData: data => Promise.all([writeFile(join(data, 'plugins.json'), '[]'),
+      writeFile(join(data, 'preferences.json'), JSON.stringify({ theme: 'light', themePreferenceVersion: 1, language: 'zh-CN' }))]) });
+  await app.evaluate(({ dialog }, path) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+  }, resolve(`plugin-dev/dist/ai-agent-sessions-${version}.plg`));
+  await page.evaluate(() => workDesk.plugins.install());
+  await page.evaluate(() => workDesk.plugins.enable('ai-agent-sessions'));
+  const invoke = (method, ...args) => page.evaluate(({ method, args, owner }) => workDesk.plugins.invoke(owner, method, args), { method, args, owner });
+  const fixture = join(data, 'terminal.cjs');
+  await writeFile(fixture, "process.stdin.resume(); console.log('READY'); setInterval(() => {}, 1000);");
+  await invoke('storage.saveAdapterConfig', { custom: { command: process.execPath, args: [fixture] }, lastCwd: data, marker: 'keep' });
+  await page.locator(`.shelf-app[data-plugin="${owner}"]`).click();
+  const view = page.locator('iframe.plugin-view').contentFrame();
+  const menu = async name => {
+    await view.getByRole('button', { name: '工作台操作', exact: true }).press('Enter');
+    await view.locator('.workspace-menu').getByRole('menuitem', { name, exact: true }).press('Enter');
+  };
+  const trigger = view.getByRole('button', { name: '工作台操作', exact: true });
+  const popup = view.locator('.workspace-menu');
+  for (const theme of ['light', 'dark']) {
+    await view.locator('html').evaluate((node, value) => { node.dataset.theme = value; }, theme);
+    await trigger.click();
+    assert.deepEqual(await popup.getByRole('menuitem').allTextContents(), ['创建会话组', 'CLI 配置', '角色维护', '历史', '新建会话']);
+    const rows = await popup.getByRole('menuitem').all();
+    let bottom = 0;
+    for (const row of rows) {
+      assert.equal(await row.locator('svg').count(), 1);
+      const box = await row.boundingBox();
+      assert.ok(box.y >= bottom);
+      bottom = box.y + box.height;
+    }
+    await rows[0].focus();
+    await rows[0].press('ArrowDown');
+    assert.equal(await rows[1].evaluate(node => node === document.activeElement), true);
+    const shots = resolve(`plugin-dev/dist/verification/ai-agent-${version}`);
+    await mkdir(shots, { recursive: true });
+    await page.screenshot({ path: join(shots, `workspace-menu-${theme}.png`) });
+    await trigger.click();
+    await popup.waitFor({ state: 'detached' });
+    await trigger.click();
+    await popup.press('Escape');
+    await popup.waitFor({ state: 'detached' });
+    assert.equal(await trigger.evaluate(node => node === document.activeElement), true);
+  }
+  await menu('CLI 配置');
+  await view.locator('#settings[aria-busy="false"]').waitFor();
+  assert.equal(await view.locator('[data-tab]').count(), 3);
+  assert.equal(await view.locator('[data-tab="roles"]').count(), 0);
+  await view.getByRole('button', { name: '完成', exact: true }).click();
+  await menu('角色维护');
+  await view.getByRole('button', { name: '新增角色', exact: true }).click();
+  await view.getByLabel('角色名称', { exact: true }).fill('架构审查');
+  await view.getByLabel('职责说明', { exact: true }).fill('审查接口边界并提供验证证据。');
+  await view.getByRole('button', { name: '保存角色', exact: true }).click();
+  await view.locator('#role-manager').getByText('架构审查', { exact: true }).waitFor();
+  const roles = (await invoke('storage.getRoles')).items;
+  assert.equal(roles.length, 5);
+  assert.equal(roles.at(-1).instructions, '审查接口边界并提供验证证据。');
+  const roleRow = view.locator('#role-manager article').filter({ hasText: '架构审查' });
+  await roleRow.getByRole('button', { name: '编辑角色', exact: true }).click();
+  await view.getByLabel('角色名称', { exact: true }).fill('架构评审');
+  await view.getByRole('button', { name: '保存角色', exact: true }).click();
+  await view.locator('#role-manager').getByText('架构评审', { exact: true }).waitFor();
+  const deleteRow = view.locator('#role-manager article').filter({ hasText: '后端开发' });
+  await deleteRow.getByRole('button', { name: '删除角色', exact: true }).click();
+  await view.getByRole('button', { name: '取消', exact: true }).click();
+  assert.equal((await invoke('storage.getRoles')).items.length, 5);
+  await deleteRow.getByRole('button', { name: '删除角色', exact: true }).click();
+  await view.locator('dialog').last().getByRole('button', { name: '删除角色', exact: true }).click();
+  await deleteRow.waitFor({ state: 'detached' });
+  assert.equal((await invoke('storage.getRoles')).items.length, 4);
+  for (const theme of ['light', 'dark']) {
+    await view.locator('html').evaluate((node, value) => { node.dataset.theme = value; }, theme);
+    const dialog = await view.locator('.roles-dialog').boundingBox();
+    const frame = await page.locator('iframe.plugin-view').boundingBox();
+    assert.ok(Math.abs(dialog.x + dialog.width / 2 - frame.x - frame.width / 2) < 4);
+    assert.ok(Math.abs(dialog.y + dialog.height / 2 - frame.y - frame.height / 2) < 4);
+    const shots = resolve(`plugin-dev/dist/verification/ai-agent-${version}`);
+    await mkdir(shots, { recursive: true });
+    await page.screenshot({ path: join(shots, `roles-${theme}.png`) });
+  }
+  await view.getByRole('button', { name: '完成', exact: true }).click();
+  await menu('CLI 配置');
+  await view.locator('#settings[aria-busy="false"]').waitFor();
+  await view.locator('[data-tab="cli"]').click();
+  await view.locator('#external-cli summary').click();
+  await view.getByLabel('可执行文件', { exact: true }).first().fill('/new/codex');
+  await view.getByLabel('参数（JSON 字符串数组）', { exact: true }).first().fill('{}');
+  await view.getByRole('button', { name: '保存配置', exact: true }).click();
+  await view.locator('#notice').getByText('参数必须为 JSON 字符串数组').waitFor();
+  assert.equal((await invoke('storage.getAdapterConfig')).codex, undefined);
+  await view.getByLabel('参数（JSON 字符串数组）', { exact: true }).first().fill('["argument with space"]');
+  await view.getByRole('button', { name: '保存配置', exact: true }).click();
+  await page.waitForFunction(async owner => (await workDesk.plugins.invoke(owner, 'storage.getAdapterConfig', [])).codex?.command === '/new/codex', owner);
+  const saved = await invoke('storage.getAdapterConfig');
+  assert.equal(saved.lastCwd, data);
+  assert.equal(saved.marker, 'keep');
+  assert.deepEqual(saved.codex.args, ['argument with space']);
+  await view.locator('.dialog-body').evaluate(node => { node.scrollTop = 0; });
+  const shots = resolve(`plugin-dev/dist/verification/ai-agent-${version}`);
+  await mkdir(shots, { recursive: true });
+  for (const theme of ['light', 'dark']) {
+    await view.locator('html').evaluate((node, value) => { node.dataset.theme = value; }, theme);
+    await page.screenshot({ path: join(shots, `cli-dialog-${theme}.png`) });
+  }
+  await view.getByRole('button', { name: '完成', exact: true }).click();
+  await view.locator('dialog').waitFor({ state: 'detached' });
+  await menu('新建会话');
+  assert.equal(await view.locator('[name="cwd"]').inputValue(), data);
+  await view.locator('[name="agentRole"]').selectOption(roles.at(-1).id);
+  assert.equal(await view.locator('[name="agentRole"] option:checked').textContent(), '架构评审');
+  await view.locator('[name="cwd"]').fill(resolve('plugin-dev'));
+  await app.evaluate(({ dialog }) => {
+    dialog.showOpenDialog = async (_, options) => {
+      globalThis.directoryOptions = options;
+      return { canceled: true, filePaths: [] };
+    };
+  });
+  await view.getByRole('button', { name: '选择…', exact: true }).click();
+  await page.waitForTimeout(100);
+  assert.equal(await app.evaluate(() => globalThis.directoryOptions.defaultPath), resolve('plugin-dev'));
+  assert.equal(await view.locator('[name="cwd"]').inputValue(), resolve('plugin-dev'));
+  await view.getByRole('button', { name: '取消', exact: true }).click();
+  const windowId = await view.locator('body').evaluate(() => window.name.slice(13));
+  const sessions = [];
+  for (let i = 0; i < 3; i++) {
+    const session = await invoke('sessions.create', { adapterId: 'custom', name: `网格 ${i}`, cwd: data, windowId });
+    sessions.push(session);
+    await output(page, session.id, 'READY');
+  }
+  const card = view.locator(`[data-session="${sessions[0].id}"]`);
+  await card.locator('.xterm-screen').evaluate(node => { node.dataset.retained = 'yes'; });
+  await card.scrollIntoViewIfNeeded();
+  const before = await card.boundingBox();
+  const header = await card.locator('.drag-handle').boundingBox();
+  await page.mouse.move(header.x + 5, header.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(header.x + 53, header.y + 77, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  const layout = await invoke('storage.getLayout');
+  assert.ok(layout.positions[sessions[0].id].row > 0);
+  const after = await card.boundingBox();
+  assert.ok(after.y > before.y);
+  assert.equal(await card.locator('.xterm-screen').getAttribute('data-retained'), 'yes');
+  // Cancellation restores the last committed position.
+  const handle = await card.locator('.drag-handle').boundingBox();
+  await page.mouse.move(handle.x + 5, handle.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + 5, handle.y + 53, { steps: 4 });
+  await card.locator('.session-header').dispatchEvent('pointercancel', { pointerId: 1 });
+  await page.mouse.up();
+  assert.deepEqual((await invoke('storage.getLayout')).positions, layout.positions);
+  await page.screenshot({ path: join(shots, 'session-grid.png') });
+  await page.locator('iframe.plugin-view').evaluate(node => { node.src = node.src; });
+  await card.waitFor();
+  assert.deepEqual((await invoke('storage.getLayout')).positions, layout.positions);
+  assert.deepEqual((await invoke('sessions.list')).sessions.map(session => session.pid), sessions.map(session => session.pid));
+  await menu('CLI 配置');
+  await view.locator('#settings[aria-busy="false"]').waitFor();
+  await view.locator('[data-tab="cli"]').click();
+  await view.locator('#external-cli summary').click();
+  assert.equal(await view.getByLabel('可执行文件', { exact: true }).first().inputValue(), '/new/codex');
+  await invoke('providers.save', { engineId: 'codex', name: '待删除测试配置', protocol: 'responses', baseUrl: 'https://example.com/v1', model: 'test' });
+  await view.locator('[data-tab="engine"]').click();
+  await view.locator('[data-step="connect"]').click();
+  assert.equal(await view.locator('#configured-connections #provider-list .connection-card').count(), 1);
+  assert.equal(await view.locator('#account').isVisible(), true);
+  await view.locator('#configured-connections').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'connections-dialog.png') });
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(850, 700));
+  await page.waitForTimeout(200);
+  assert.equal(await view.locator('.configuration-dialog').evaluate(node => node.scrollWidth <= node.clientWidth), true);
+  await view.locator('#provider-list article').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'connections-dialog-narrow.png') });
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 940));
+  await view.locator('#provider-list').getByRole('button', { name: '删除', exact: true }).click();
+  await view.getByRole('button', { name: '确认', exact: true }).click();
+  await page.waitForTimeout(250);
+  assert.equal((await invoke('providers.list')).length, 0);
+  await view.locator('[data-step="install"]').click();
+  await view.locator('.dialog-body').evaluate(node => { node.scrollTop = 0; });
+  await view.locator('#runtime-details').focus();
+  assert.equal(await view.locator('#runtime-details [role=tooltip]').isVisible(), true);
+  await view.locator('#config-engine').focus();
+  await page.screenshot({ path: join(shots, 'engine-dialog.png') });
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(850, 700));
+  await page.waitForTimeout(200);
+  assert.equal(await view.locator('.configuration-dialog').evaluate(node => node.scrollWidth <= node.clientWidth), true);
+  await page.screenshot({ path: join(shots, 'engine-dialog-narrow.png') });
+  await view.getByRole('button', { name: '完成', exact: true }).click();
+});

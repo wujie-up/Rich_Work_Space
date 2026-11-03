@@ -1,4 +1,6 @@
 import { el, button, run } from './ui.js';
+import { prepareContextMenu } from '../resource/context-menu.js';
+import { dismissMenuOnLeave, positionPopup } from '../resource/popup.js';
 
 export const pluginDragType = 'application/x-work-desk-plugin';
 export const canOpen = (plugin) => plugin.state === 'enabled' && !plugin.operation && plugin.views.length > 0;
@@ -12,6 +14,7 @@ export function contextMenu(event, actions) {
   const previous = document.activeElement;
   const menu = el('div', { class: 'context-menu', role: 'menu', popover: 'manual' });
   const close = () => {
+    releaseMenu();
     menu.remove();
     document.removeEventListener('pointerdown', outside, true);
     document.removeEventListener('keydown', keyboard, true);
@@ -21,6 +24,7 @@ export function contextMenu(event, actions) {
     }
     closeMenu = null;
   };
+  const releaseMenu = dismissMenuOnLeave(menu, close);
   const outside = (e) => { if (!menu.contains(e.target)) { close(); } };
   const keyboard = (e) => {
     const items = [...menu.children];
@@ -35,14 +39,16 @@ export function contextMenu(event, actions) {
   };
   for (const [label, action] of actions) {
     const item = button(label, () => { close(); return action(); });
+    item.removeAttribute('data-i18n-textcontent');
+    item.setAttribute('aria-label', label);
     item.setAttribute('role', 'menuitem');
     menu.append(item);
   }
+  prepareContextMenu(menu);
   document.body.append(menu);
   // The top layer keeps menus above the shelf and isolated plugin frames regardless of their z-index.
   menu.showPopover();
-  menu.style.left = `${Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 8)}px`;
-  menu.style.top = `${Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 8)}px`;
+  positionPopup(menu, event.currentTarget, { point: { x: event.clientX, y: event.clientY } });
   document.addEventListener('pointerdown', outside, true);
   document.addEventListener('keydown', keyboard, true);
   window.addEventListener('blur', close);

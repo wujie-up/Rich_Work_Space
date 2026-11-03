@@ -62,7 +62,7 @@ async function install(app, page, archive, id) {
   return record;
 }
 
-test('最新 DeckPg：角色输入输出保存、分支编辑、原生审批和循环决定，普通/平铺/配置页可用', { timeout: 150000 }, async t => {
+test('最新 DeskPG：角色输入输出保存、分支编辑、原生审批和循环决定，普通/平铺/配置页可用', { timeout: 150000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'deck-pipeline-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const archive = await provider(root);

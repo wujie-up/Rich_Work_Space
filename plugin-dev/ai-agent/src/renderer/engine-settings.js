@@ -1,21 +1,25 @@
+import { pageLifecycle } from '../../../../desk/src/resource/page-lifecycle.js';
 import { api, conversationApi } from './api.js';
+import { confirm } from './ui.js';
 
 const call = (method, ...args) => conversationApi.call(method, ...args);
 
 // Reuse the same engine controls in the dedicated settings page and conversation panel.
-export function engineSettings({ onChange = () => {}, onError }) {
-  const $ = id => document.getElementById(id);
+export function engineSettings({ onChange = () => {}, onLoading = () => {}, onError, root = document }) {
+  const lifecycle = pageLifecycle();
+  const $ = id => root.querySelector(`#${id}`);
   let engines = [];
   let config;
   let timer;
   let loginId;
   let generation = 0;
+  let disposed = false;
   const selected = () => $('config-engine').value || 'codex';
   const action = fn => async event => {
     event?.preventDefault();
     try { await fn(); } catch (error) { onError(error); }
   };
-  const poll = () => { timer ||= setInterval(() => refresh().catch(onError), 2500); };
+  const poll = () => { if (disposed) { return; } timer ||= setInterval(() => { if (lifecycle.visible()) { refresh().catch(onError); } }, 2500); };
 
   async function account(id, version) {
     const result = await call('conversation.account', 'account/read', { refreshToken: false }, id);
@@ -41,26 +45,39 @@ export function engineSettings({ onChange = () => {}, onError }) {
   }
 
   async function refresh() {
+    if (disposed) { return; }
     const version = ++generation;
-    [engines, config] = await Promise.all([call('engines.list'), call('engines.config')]);
-    const id = selected();
-    const engine = engines.find(engine => engine.id === id);
-    $('engine-info').textContent = `${engine.name} ${engine.pin.version} · ${engine.pin.platform}\n独立目录：${engine.command || '本插件数据目录（安装后显示程序路径）'}\n来源：${engine.pin.url}\nSHA-256：${engine.pin.sha256}`;
-    $('default-engine').checked = config.defaultEngine === id;
-    $('reuse-skills').checked = config.engines[id]?.reuseSkills === true;
-    $('reuse-rules').checked = config.engines[id]?.reuseRules === true;
-    $('source-info').textContent = `授权来源：${engine.sources.auth}（macOS 也支持本机钥匙串）\n技能：${engine.sources.skills.join('、')}\n规范：${engine.sources.rules.join('、')}；工作目录规范由引擎原生读取`;
-    const installing = engine.installation.state === 'installing';
-    $('installation').textContent = installing ? '正在下载、校验并验证原生程序…' : engine.installation.error || (engine.state === 'ready' ? '已安装' : '尚未安装');
-    for (const name of ['install', 'import', 'remove-engine']) { $(name).disabled = installing; }
-    for (const name of ['login', 'device-login', 'logout']) { $(name).disabled = engine.state !== 'ready'; }
-    $('device-login').hidden = id !== 'codex';
-    $('login').textContent = id === 'codex' ? '独立登录 ChatGPT' : '独立登录 Claude Code';
-    await onChange(engines, config);
-    if (installing) { poll(); }
-    else if (timer) { clearInterval(timer); timer = null; }
-    if (engine.state === 'ready') { await account(id, version); }
-    else { $('account').textContent = '安装后可独立登录'; }
+    onLoading(true);
+    try {
+      const values = await Promise.all([call('engines.list'), call('engines.config')]);
+      if (version !== generation) { return; }
+      [engines, config] = values;
+      const id = selected();
+      const engine = engines.find(engine => engine.id === id);
+      $('engine-info').textContent = `${engine.name} ${engine.version || engine.pin.version} · ${engine.pin.platform}\n独立目录：${engine.command || '本插件数据目录（安装后显示程序路径）'}\n来源：${engine.pin.url}\nSHA-256：${engine.pin.sha256}`;
+      if ($('runtime-details')) {
+        $('runtime-details').title = $('engine-info').textContent;
+        $('engine-info').textContent = `${engine.name} ${engine.version || engine.pin.version} · ${engine.pin.platform}`;
+      }
+      $('default-engine').checked = config.defaultEngine === id;
+      $('reuse-skills').checked = config.engines[id]?.reuseSkills === true;
+      $('reuse-rules').checked = config.engines[id]?.reuseRules === true;
+      const sourceInfo = `授权来源：${engine.sources.auth}（macOS 也支持本机钥匙串）\n技能：${engine.sources.skills.join('、')}\n规范：${engine.sources.rules.join('、')}；工作目录规范由引擎原生读取`;
+      if ($('source-info').classList.contains('help')) { $('source-info').title = sourceInfo; }
+      else { $('source-info').textContent = sourceInfo; }
+      const installing = engine.installation.state === 'installing';
+      $('installation').textContent = installing ? '正在下载、校验并验证原生程序…' : engine.installation.error || (engine.state === 'ready' ? '已安装' : '尚未安装');
+      for (const name of ['install', 'import', 'remove-engine']) { $(name).disabled = installing; }
+      for (const name of ['login', 'device-login', 'logout']) { $(name).disabled = engine.state !== 'ready'; }
+      $('device-login').hidden = id !== 'codex';
+      $('login').title = id === 'codex' ? '独立登录 ChatGPT' : '独立登录 Claude Code';
+      $('login').setAttribute('aria-label', $('login').title);
+      await onChange(engines, config);
+      if (installing) { poll(); }
+      else if (timer) { clearInterval(timer); timer = null; }
+      if (engine.state === 'ready') { await account(id, version); }
+      else { $('account').textContent = '安装后可独立登录'; }
+    } finally { if (version === generation) { onLoading(false); } }
   }
 
   async function save() {
@@ -76,7 +93,7 @@ export function engineSettings({ onChange = () => {}, onError }) {
     $('login-status').textContent = '';
     await refresh();
   });
-  $('install').onclick = action(async () => { await call('engines.install', selected()); await refresh(); });
+  $('install').onclick = action(async () => { await call('engines.install', selected(), undefined, $('target-version')?.value || undefined); await refresh(); });
   $('choose-archive').onclick = action(async () => {
     const path = await api.host.chooseFile({ extensions: ['gz', 'tgz'], title: '选择离线引擎包' });
     if (path) { $('archive-path').value = path; }
@@ -84,10 +101,18 @@ export function engineSettings({ onChange = () => {}, onError }) {
   $('import').onclick = action(async () => {
     const path = $('archive-path').value.trim();
     if (!path.startsWith('/')) { throw Error('请输入离线引擎包的绝对路径'); }
-    await call('engines.install', selected(), path);
+    await call('engines.install', selected(), path, $('target-version')?.value || undefined);
     await refresh();
   });
-  $('remove-engine').onclick = action(async () => { await call('engines.remove', selected()); await refresh(); });
+  $('remove-engine').onclick = action(async () => {
+    const id = selected();
+    const engine = engines.find(engine => engine.id === id);
+    if (!await confirm('移除引擎', `移除“${engine.name}”的安装登记？将保留程序文件、配置、授权和历史记录；重新安装后可继续使用。`)) {
+      return;
+    }
+    await call('engines.remove', id);
+    await refresh();
+  });
   for (const id of ['default-engine', 'reuse-skills', 'reuse-rules']) { $(id).onchange = action(save); }
   $('reuse-auth').onclick = action(async () => {
     await call('engines.importAuth', selected());
@@ -113,7 +138,9 @@ export function engineSettings({ onChange = () => {}, onError }) {
     $('login-link').replaceChildren();
     await refresh();
   });
-  conversationApi.onAccount(() => refresh().catch(onError));
-  window.addEventListener('pagehide', () => clearInterval(timer));
-  return { refresh };
+  const offVisible = lifecycle.subscribe(visible => { if (visible) { refresh().catch(onError); } });
+  const offAccount = conversationApi.onAccount(() => { if (lifecycle.visible()) { refresh().catch(onError); } });
+  const dispose = () => { disposed = true; generation++; clearInterval(timer); offAccount(); offVisible(); lifecycle.dispose(); };
+  window.addEventListener('pagehide', dispose, { once: true });
+  return { refresh, dispose: () => { dispose(); window.removeEventListener('pagehide', dispose); } };
 }

@@ -1,0 +1,10 @@
+.web-settings { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border); display: grid; gap: 14px; }
+.web-setting-row { display: flex; align-items: center; justify-content: flex-end; gap: 16px; }
+.web-setting-row > span:first-child { margin-right: auto; }
+.web-settings a { color: var(--muted); overflow-wrap: anywhere; }
+.web-account-editor { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; }
+.web-account-editor input { min-width: 0; }
+
+.web-account-settings { display: grid; gap: 14px; min-width: min(480px, 70vw); }
+.web-account-settings a, .web-account-settings p { overflow-wrap: anywhere; }
+@media (max-width: 540px) { .web-account-editor { grid-template-columns: 1fr; } }

@@ -1,13 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { cp, mkdir, writeFile, readFile, mkdtemp, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
+import { _electron as electron } from 'playwright';
 import { launch, openConfiguration } from '../../../../desk/test/electron/helpers.js';
 import { withPackageSource } from '../../../../desk/src/main/common/plugin-package.js';
 import { alive } from '../../../../desk/test/electron/helpers.js';
 
 const owner = 'resource-monitor';
-const archive = resolve('plugin-dev/dist/resource-monitor-0.1.2.plg');
+const manifest = JSON.parse(await readFile(new URL('../../plugin.json', import.meta.url), 'utf8'));
+const archive = resolve(`plugin-dev/dist/resource-monitor-${manifest.version}.plg`);
 
 // This Playwright version treats an async waitForFunction predicate as immediately truthy.
 async function waitFor(page, predicate, argument) {
@@ -126,7 +130,7 @@ test('empty host and isolated plugin crashes keep siblings usable; monitoring st
 
 test('packaged monitor samples plugins, retains collapsed views, settings and data through reinstall', { timeout: 120000 }, async t => {
   const { page, app, data } = await launch(t, { openPlugin: false, prepareData: async data => {
-    await writeFile(join(data, 'plugins.json'), '[]');
+    await writeFile(join(data, 'plugins.json'), JSON.stringify([{ id: owner, state: 'enabled', autoStart: true }]));
     await mkdir(join(data, 'plugins', owner), { recursive: true });
     await withPackageSource(archive, source => cp(source, join(data, 'plugins', owner), { recursive: true }));
   } });
@@ -147,14 +151,16 @@ test('packaged monitor samples plugins, retains collapsed views, settings and da
   await frame.locator('[data-metric=cpu] .metric-value').filter({ hasNotText: '采集中' }).waitFor();
   assert.ok(await frame.locator('svg path').count() >= 4);
   const picker = frame.getByLabel('查看插件');
-  const scroll = frame.locator('.table-scroll');
-  await scroll.evaluate(node => { node.style.maxHeight = '20px'; node.scrollTop = 10; });
-  const scrollTop = await scroll.evaluate(node => node.scrollTop);
+  const content = frame.locator('#app');
+  await content.evaluate(node => { node.style.minHeight = '700px'; });
   await picker.focus();
+  await content.evaluate(() => { document.scrollingElement.scrollTop = 10; });
+  const scrollTop = await content.evaluate(() => document.scrollingElement.scrollTop);
+  assert.ok(scrollTop > 0);
   await page.waitForTimeout(2200);
   assert.equal(await picker.evaluate(node => node === document.activeElement), true, 'polling must retain keyboard focus');
-  assert.equal(await scroll.evaluate(node => node.scrollTop), scrollTop, 'polling must retain list scroll');
-  await scroll.evaluate(node => { node.style.maxHeight = ''; node.scrollTop = 0; });
+  assert.equal(await content.evaluate(() => document.scrollingElement.scrollTop), scrollTop, 'polling must retain page scroll');
+  await content.evaluate(node => { node.style.minHeight = ''; document.scrollingElement.scrollTop = 0; });
   await overlay.screenshot({ path: resolve('.test-results/resource-monitor-overlay.png') });
   await overlay.getByRole('button', { name: '收起悬浮面板', exact: true }).click();
   assert.equal(Math.round((await overlay.boundingBox()).height), 36);
@@ -174,13 +180,14 @@ test('packaged monitor samples plugins, retains collapsed views, settings and da
   await openConfiguration(page);
   await page.locator('.plugin-card[data-plugin="resource-monitor"]').getByRole('button', { name: /配置/ }).click();
   const settingsFrame = page.frameLocator('.plugin-settings-content iframe');
-  await settingsFrame.getByLabel('采样间隔').selectOption('5');
+  await settingsFrame.getByLabel('采样间隔').fill('7');
+  assert.equal(await settingsFrame.locator('.interval-field').textContent(), 's');
   await settingsFrame.getByLabel('默认收起为横条').check();
   await settingsFrame.getByRole('button', { name: '保存设置', exact: true }).click();
   await settingsFrame.getByText('已保存', { exact: true }).waitFor();
   await page.locator('.plugin-settings').screenshot({ path: resolve('.test-results/resource-monitor-settings.png') });
   assert.deepEqual(JSON.parse(await readFile(join(data, 'plugin-data', owner, 'settings.json'), 'utf8')),
-    { interval: 5, defaultCollapsed: true });
+    { interval: 7, defaultCollapsed: true });
   for (const theme of ['light', 'dark']) {
     await page.evaluate(async theme => { await workDesk.storage.savePreferences({ theme }); }, theme);
     await page.reload();
@@ -200,7 +207,7 @@ test('packaged monitor samples plugins, retains collapsed views, settings and da
   await page.reload();
   await page.locator('.plugin-overlay[data-collapsed=true]').waitFor();
   assert.deepEqual(await page.evaluate(id => workDesk.plugins.invoke(id, 'monitor.settings', []), owner),
-    { interval: 5, defaultCollapsed: true });
+    { interval: 7, defaultCollapsed: true });
   await page.evaluate(async id => {
     const preview = await workDesk.plugins.preview(id, 'close');
     await workDesk.plugins.close(id, preview.confirmationToken);
@@ -214,10 +221,71 @@ test('packaged monitor samples plugins, retains collapsed views, settings and da
   assert.deepEqual(errors, []);
 });
 
+test('monitor uses one page scroll and expands the complete list when resized taller', { timeout: 60000 }, async t => {
+  const data = await mkdtemp(join(tmpdir(), 'monitor-layout-'));
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const app = await electron.launch({ executablePath: createRequire(import.meta.url)('electron'),
+    args: [resolve('plugin-dev/resource-monitor/test/fixtures/layout.cjs'), `--test-data=${data}`], env });
+  t.after(async () => {
+    await app.close();
+    await rm(data, { recursive: true, force: true });
+  });
+  const page = await app.firstWindow();
+  const frame = page.frameLocator('iframe');
+  await frame.locator('tbody tr').first().waitFor();
+  await mkdir('.test-results', { recursive: true });
+  for (const theme of ['light', 'dark']) {
+    await frame.locator('html').evaluate((node, theme) => { node.dataset.theme = theme; }, theme);
+    for (const width of [320, 520, 850]) {
+      await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0].setContentSize(width, 380), width);
+      const table = frame.locator('.table-scroll');
+      const layout = await table.evaluate(node => ({
+        overflow: getComputedStyle(node).overflowY,
+        clipped: node.scrollHeight > node.clientHeight,
+        pageOverflow: document.scrollingElement.scrollHeight > document.scrollingElement.clientHeight
+      }));
+      assert.equal(layout.clipped, false, `complete list at ${width}px in ${theme}`);
+      assert.equal(layout.overflow, 'visible', 'the list must not own a scrollbar');
+      assert.equal(layout.pageOverflow, true, 'only the page scrolls in a short panel');
+      assert.equal(await table.evaluate(() => document.scrollingElement.scrollWidth <= document.scrollingElement.clientWidth),
+        true, 'status values fit without horizontal clipping');
+      await frame.locator('.status').scrollIntoViewIfNeeded();
+      assert.equal(await frame.locator('.status').evaluate(node => {
+        const rect = node.getBoundingClientRect();
+        return rect.top >= 0 && rect.bottom <= innerHeight;
+      }), true, 'sampling status remains reachable');
+      await page.screenshot({ path: resolve(`.test-results/resource-monitor-${theme}-${width}-short.png`) });
+      if (theme === 'light' && width === 320) {
+        const help = frame.getByRole('button', { name: '统计口径说明', exact: true });
+        await help.focus();
+        const scrollTop = await table.evaluate(() => document.scrollingElement.scrollTop);
+        const sampled = await frame.locator('.status').textContent();
+        await frame.locator('.status').filter({ hasNotText: sampled }).waitFor();
+        assert.equal(await table.evaluate(() => document.scrollingElement.scrollTop), scrollTop, 'sampling retains page scroll');
+        assert.equal(await help.evaluate(node => node === document.activeElement), true, 'sampling retains keyboard focus');
+        await help.blur();
+      }
+      await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0].setContentSize(width, 900), width);
+      await table.evaluate(() => { document.scrollingElement.scrollTop = 0; });
+      assert.equal(await table.evaluate(() => document.scrollingElement.scrollHeight <= document.scrollingElement.clientHeight),
+        true, 'a taller panel must use its available space');
+      assert.equal(await frame.locator('tbody tr').last().evaluate(node => node.getBoundingClientRect().bottom <= innerHeight),
+        true, 'the final row is visible without inner scrolling');
+      await page.screenshot({ path: resolve(`.test-results/resource-monitor-${theme}-${width}-tall.png`) });
+    }
+  }
+  await page.locator('iframe').evaluate(node => { node.src = 'desk-plugin://resource-monitor/src/resource/settings.html'; });
+  await frame.getByLabel('采样间隔').fill('7');
+  await frame.getByRole('button', { name: '保存设置', exact: true }).click();
+  await frame.getByText('已保存', { exact: true }).waitFor();
+  assert.equal(await frame.locator('body').evaluate(() => document.scrollingElement.scrollWidth <= innerWidth), true);
+});
+
 
 test('monitor explanations appear only on help hover or keyboard focus', { timeout: 60000 }, async t => {
   const { page } = await launch(t, { openPlugin: false, prepareData: async data => {
-    await writeFile(join(data, 'plugins.json'), '[]');
+    await writeFile(join(data, 'plugins.json'), JSON.stringify([{ id: owner, state: 'enabled', autoStart: true }]));
     await mkdir(join(data, 'plugins', owner), { recursive: true });
     await withPackageSource(archive, source => cp(source, join(data, 'plugins', owner), { recursive: true }));
   } });

@@ -1,4 +1,6 @@
-const origin = 'desk-host://desktop';
+import { pluginHostOrigin } from '../../../../desk/src/resource/plugin-host.js';
+const hostOrigin = pluginHostOrigin();
+const origin = hostOrigin;
 const pending = new Map();
 let sequence = 0;
 export let collapsed = false;

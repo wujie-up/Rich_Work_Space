@@ -1,10 +1,7 @@
+import { showPopup, closePopup } from '../resource/popup.js';
 import { el, button, iconButton, run } from './ui.js';
+import { mountWebSettings } from '../../../web/src/browser/settings.js';
 import { mountPlugins } from './plugins.js';
-
-// Keep native selection and keyboard behavior while animating only the decorative arrow.
-function selectControl(control) {
-  return el('span', { class: 'settings-select' }, control, el('span', { class: 'select-arrow', 'aria-hidden': 'true' }));
-}
 
 export function mountSettings(openPlugin, toggleTheme, desktop) {
   const previous = document.activeElement;
@@ -16,6 +13,7 @@ export function mountSettings(openPlugin, toggleTheme, desktop) {
   const close = () => {
     generation++;
     dispose?.();
+    closePopup(panel);
     panel.remove();
     document.removeEventListener('keydown', escape);
     if (previous.isConnected) {
@@ -43,7 +41,7 @@ export function mountSettings(openPlugin, toggleTheme, desktop) {
       }
       dispose = cleanup;
     } else if (id === 'desktop-settings') {
-      const names = el('input', { type: 'checkbox', 'aria-label-message': '显示插件名称' });
+      const names = el('input', { type: 'checkbox', role: 'switch', 'aria-label-message': '显示插件名称' });
       names.checked = desktop.shelfNames;
       names.addEventListener('change', () => run(async () => {
         names.disabled = true;
@@ -69,11 +67,12 @@ export function mountSettings(openPlugin, toggleTheme, desktop) {
             control.disabled = false;
           }
         }));
-        return el('label', { class: 'field' }, el('span', { message: label }), selectControl(control));
+        return el('label', { class: 'field' }, el('span', { message: label }), control);
       };
       view.append(sizeControl('网格大小', 'gridSize', [16, 24, 32, 40, 48]),
         sizeControl('插件图标大小', 'shelfIconSize', [24, 36, 48]),
         el('label', { class: 'shelf-names-setting' }, names, el('span', { message: '显示插件名称' })));
+      await mountWebSettings(view);
     } else {
       const theme = el('select', { id: 'theme-mode', 'aria-label-message': '外观' },
         ...[['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']].map(([value, text]) => el('option', { value, message: text })));
@@ -82,7 +81,7 @@ export function mountSettings(openPlugin, toggleTheme, desktop) {
         await toggleTheme(theme.value);
         desktop.theme = theme.value;
       }));
-      view.append(el('label', { class: 'field' }, el('span', { message: '外观' }), selectControl(theme)));
+      view.append(el('label', { class: 'field' }, el('span', { message: '外观' }), theme));
     }
   };
   const selectLayout = (layout) => {
@@ -112,6 +111,8 @@ export function mountSettings(openPlugin, toggleTheme, desktop) {
   exit.classList.add('settings-close');
   panel.append(el('div', { class: 'settings-tabs' }, plugins, desk, theme, exit), body);
   document.body.append(panel);
+  panel.addEventListener('cancel', close);
+  showPopup(panel, previous, { placement: 'center' });
   document.addEventListener('keydown', escape);
   exit.focus();
   run(() => tab('plugin-center'));

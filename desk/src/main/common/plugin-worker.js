@@ -12,6 +12,7 @@ const services = [];
 const capabilities = new Map();
 const controllers = new Map();
 const subscribers = new Set();
+const channelSubscribers = new Set();
 const calls = new AsyncLocalStorage();
 const pending = new Map();
 let sequence = 0;
@@ -24,7 +25,7 @@ function serviceRequest(action, input, timeout = 5000) {
   const context = calls.getStore();
   // Servers and event listeners outlive their creating RPC; only live calls carry its deadline and lineage.
   const parent = context?.completed ? undefined : context;
-  const deadline = Math.min(parent?.deadline || Date.now() + 5000, Date.now() + timeout);
+  const deadline = Math.min(parent?.deadline || Date.now() + timeout, Date.now() + timeout);
   return new Promise((resolve, reject) => {
     const requestId = ++sequence;
     const timer = setTimeout(() => {
@@ -46,7 +47,19 @@ async function activate({ id, directory, root }) {
   }
   const context = {
     pluginId: id, storage,
-    host: { runtimeDirectory: () => serviceRequest('host.runtimeDirectory') },
+    host: { transport: Object.fromEntries(['describe', 'open', 'revoke'].map(action =>
+      [action, input => serviceRequest(`host.transport.${action}`, input, 30000)])), channels: {
+      ...Object.fromEntries(['register', 'unregister', 'list', 'send', 'inbox', 'claim', 'settle']
+        .map(action => [action, input => serviceRequest(`host.channels.${action}`, input, 30000)])),
+      subscribe(callback) {
+        channelSubscribers.add(callback);
+        return () => channelSubscribers.delete(callback);
+      }
+    }, runtimeDirectory: () => serviceRequest('host.runtimeDirectory'), messages: {
+      request: input => serviceRequest('host.messages.request', input),
+      get: id => serviceRequest('host.messages.get', id),
+      cancel: id => serviceRequest('host.messages.cancel', id)
+    } },
     importModule: (name) => import(pathToFileURL(require.resolve(name)).href),
     emit: (channel, value) => send({ type: 'event', channel, value }),
     ownProcesses: (pids) => {
@@ -55,7 +68,13 @@ async function activate({ id, directory, root }) {
       }
       send({ type: 'processes', pids });
     },
-    resources: { report: (entries) => send({ type: 'resources', entries }) },
+    resources: {
+      report: entries => send({ type: 'resources', entries }),
+      async acquire(key, { exclusive = false } = {}) {
+        const token = await serviceRequest('resources.acquire', { key, exclusive });
+        return { release: () => serviceRequest('resources.release', { token }) };
+      }
+    },
     capabilities: {
       async register(descriptor, handler) {
         if (typeof handler !== 'function') { throw Error('能力需要处理函数'); }
@@ -80,6 +99,9 @@ async function activate({ id, directory, root }) {
         await serviceRequest('capabilities.unregister', { id, version });
         capabilities.delete(`${id}:${version}`);
       },
+      authorize: input => serviceRequest('capabilities.authorize', input),
+      authorization: id => serviceRequest('capabilities.authorization', id),
+      revoke: id => serviceRequest('capabilities.revoke', id),
       discover: (filter = {}) => serviceRequest('capabilities.discover', filter),
       invoke(handle, input, options = {}) {
         const request = handle?.handle ? handle : { handle, input, options };
@@ -100,11 +122,11 @@ async function activate({ id, directory, root }) {
       discover: (contract) => serviceRequest('discover', contract),
       invoke: (provider, input, { timeout = 5000 } = {}) => serviceRequest('invoke', { provider, input }, timeout)
     },
-    methods: { register(name, handler, { exclusive = false, resource, resourceExclusive = false } = {}) {
+    methods: { register(name, handler, { exclusive = false, resource, resourceExclusive = false, nativeOnly = false } = {}) {
       if (!/^[a-z][a-zA-Z0-9.]+$/.test(name) || methods.has(name) || typeof handler !== 'function') {
         throw Error('插件方法名称重复或无效');
       }
-      methods.set(name, { handler, exclusive, resourceExclusive });
+      methods.set(name, { handler, exclusive, resourceExclusive, nativeOnly });
       if (resource) {
         resources.set(name, resource);
       }
@@ -119,7 +141,7 @@ async function activate({ id, directory, root }) {
   };
   try {
     await module.activate(context);
-    return { views, services, methods: [...methods].map(([name, { exclusive, resourceExclusive }]) => ({ name, exclusive, resourceExclusive, resource: resources.has(name) })) };
+    return { views, services, methods: [...methods].map(([name, { exclusive, resourceExclusive, nativeOnly }]) => ({ name, exclusive, resourceExclusive, nativeOnly, resource: resources.has(name) })) };
   } catch (error) {
     try {
       await module.deactivate();
@@ -131,6 +153,13 @@ async function activate({ id, directory, root }) {
 }
 
 process.on('message', async (message) => {
+  if (message.type === 'channel.event') {
+    for (const callback of channelSubscribers) {
+      try { callback(message.value); }
+      catch (error) { console.error('[plugin:channel-subscriber]', { error: error.stack }); }
+    }
+    return;
+  }
   if (message.type === 'capability.event') {
     for (const callback of subscribers) {
       try { callback(message.value); }

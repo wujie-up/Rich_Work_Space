@@ -1,5 +1,9 @@
+import { mountDesktopFiles } from './desktop-files.js';
+import { fileProvider } from './file-associations.js';
+import { mountPluginMessages } from './plugin-messages.js';
 import { message, setLanguage } from './i18n.js';
 import './desk.css';
+import '../resource/controls.css';
 import { pluginIcon } from './plugin-icon.js';
 import { api, el, toast, run, ask, confirm, iconButton, icons, modal } from './ui.js';
 import { mountWindows } from './window-manager.js';
@@ -13,7 +17,7 @@ import { mountOverlays } from './overlays.js';
 const content = document.querySelector('#content');
 const desktop = el('div', { class: 'desktop-surface', 'aria-label-message': '桌面' },
   el('span', { class: 'workspace-label', message: '本地工作空间' }));
-const manager = mountWindows(content, { openPlugin: newPluginWindow, openView: openContributedView, closePlugin: id => run(() => transition(id, 'close')) });
+const manager = mountWindows(content, { localClose: Boolean(api.host.browser), openPlugin: newPluginWindow, openView: openContributedView, changed: updateOpenIndicators, closePlugin: id => run(() => transition(id, 'close')) });
 const { windows } = manager;
 let preferences;
 let closeSettings;
@@ -46,7 +50,7 @@ document.querySelector('#desktop').replaceWith(homeButton);
 const surface = el('div', { class: 'desktop-stage' });
 content.before(surface);
 surface.append(content, shelf, document.querySelector('.titlebar'), shelfToggle);
-const overlays = mountOverlays(surface, { closePlugin: id => transition(id, 'close'),
+const overlays = mountOverlays(surface, { closePlugin: id => api.host.browser ? overlays.close(id) : transition(id, 'close'),
   openWindow: (plugin, view) => manager.open(plugin, view), openView: openContributedView });
 const closeAccountMenu = mountAccountMenu(surface, configure, changeLanguage);
 surface.style.setProperty('--shelf-preferred-width', `${Number(localStorage.getItem('plugin-shelf-width')) || 64}px`);
@@ -66,7 +70,7 @@ shelfToggle.addEventListener('pointermove', (event) => {
     shelfResize.moved = true;
   }
   if (shelfResize.moved) {
-    const width = Math.max(64, Math.min(320, shelfResize.width + event.clientX - shelfResize.x));
+    const width = Math.max(0, Math.min(320, shelfResize.width + event.clientX - shelfResize.x));
     surface.style.setProperty('--shelf-preferred-width', `${width}px`);
     surface.classList.add('shelf-resizing');
   }
@@ -78,6 +82,27 @@ shelfToggle.addEventListener('lostpointercapture', () => {
   }
 });
 content.append(desktop);
+const desktopFiles = mountDesktopFiles(desktop, openDesktopFile);
+
+// Resolve format ownership from enabled plugin declarations; other files use the OS.
+async function openDesktopFile(name) {
+  const provider = fileProvider(records, name);
+  if (!provider) {
+    await api.desktop.openExternal(name);
+    return;
+  }
+  const path = await api.desktop.resolve(name);
+  dismissMenu();
+  closeSettings?.();
+  closeSettings = null;
+  manager.open(provider.plugin, { ...provider.view, launchContext: { path } });
+}
+
+function updateOpenIndicators() {
+  for (const node of shelf.children) {
+    node.dataset.open = String([...windows.values()].some(view => view.plugin.id === node.dataset.plugin));
+  }
+}
 
 function configure() {
   closeAccountMenu();
@@ -92,6 +117,7 @@ function showDesktop() {
   closeSettings?.();
   closeSettings = null;
   manager.home();
+  run(desktopFiles.refresh);
 }
 
 async function openPlugin(id) {
@@ -110,7 +136,7 @@ async function openPlugin(id) {
   }
   const existing = [...windows.values()].filter(view => view.plugin.id === id).sort((a, b) => b.layer - a.layer)[0];
   if (existing) {
-    manager.restore(existing);
+    manager.restoreAll(id);
     return;
   }
   manager.open(plugin);
@@ -145,13 +171,15 @@ async function refresh() {
   records = await api.plugins.list();
   for (const [id, window] of windows) {
     // Keep the shell until shutdown succeeds, so a failed operation leaves the running view available.
-    if (!records.some((record) => record.id === window.plugin.id && record.state === 'enabled')) {
+    const record = records.find(record => record.id === window.plugin.id && record.state === 'enabled');
+    if (record) {
+      Object.assign(window.plugin, record);
+    } else {
       manager.close(id);
     }
   }
   mountDesktop();
   overlays.refresh(records);
-  refreshEntry();
 }
 
 function mountDesktop() {
@@ -171,6 +199,7 @@ function mountDesktop() {
   }));
   [...shelf.children].forEach(node => shelfLayout.bind(node));
   shelfLayout.layout();
+  updateOpenIndicators();
 }
 
 // Display aliases belong to the desktop; plugin identity and running windows keep their original metadata.
@@ -207,6 +236,7 @@ function openDrop(event) {
 async function changeLanguage(language) {
   await savePreferences({ language });
   setLanguage(language);
+  window.dispatchEvent(new Event('desk-theme'));
   console.info('[desktop:language]', { language });
 }
 
@@ -258,7 +288,7 @@ systemTheme.addEventListener('change', () => {
 
 desktop.addEventListener('contextmenu', (event) => contextMenu(event, [
   ...([...windows.values()].some((view) => view.root.dataset.phase === 'open') ? [['回到桌面', showDesktop]] : []),
-  ['添加插件', configure]
+  ['创建文件', desktopFiles.create], ['粘贴', desktopFiles.paste], ['添加插件', configure]
 ]));
 for (const target of [content, document.querySelector('#desktop')]) {
   target.addEventListener('dragover', acceptDrag);
@@ -284,8 +314,6 @@ api.events.error((error) => {
   }
   toast(error.message);
 });
-const conversationEntry = iconButton('M4 4h16v12H9l-5 4Z M8 8h8M8 12h5', 'AI 对话', openConversation, 'global-conversation-entry');
-surface.append(conversationEntry);
 await run(async () => {
   preferences = await api.storage.getPreferences();
   setLanguage(preferences.language || 'zh-CN');
@@ -297,37 +325,22 @@ await run(async () => {
     toast(info.warning);
   }
   await refresh();
+  await desktopFiles.refresh();
+  // Run once per desktop launch, never during metadata refresh or after a manual close.
+  for (const plugin of records.filter(record => record.autoStart && canOpen(record))) {
+    try {
+      await openPlugin(plugin.id);
+    } catch (error) {
+      console.error('[plugin:auto-start]', { pluginId: plugin.id, message: error.message });
+      toast(error.message);
+    }
+  }
 });
 
 // Native application menus reuse the same settings view as desktop actions.
 api.events.configure(() => run(configure));
 
 
-function entryProviders() {
-  return records.filter(plugin => canOpen(plugin)).flatMap(plugin => plugin.views
-    .filter(view => view.contributes?.entries?.includes('global-conversation')).map(view => ({ plugin, view })));
-}
-function refreshEntry() {
-  conversationEntry.disabled = false;
-}
-async function openConversation() {
-  const providers = entryProviders();
-  if (!providers.length) { configure(); toast('请安装并启用提供 AI 对话入口的插件'); return; }
-  let provider = providers.find(item => `${item.plugin.id}:${item.view.id}` === localStorage.getItem('entry-provider:global-conversation'));
-  if (!provider && providers.length === 1) { provider = providers[0]; }
-  if (!provider) {
-    provider = await modal('选择对话插件', ({ body, finish }) => {
-      for (const item of providers) {
-        body.append(el('button', { text: `${item.plugin.name} · ${item.view.title}`, onclick: () => finish(item) }));
-      }
-    });
-  }
-  if (!provider) { return; }
-  localStorage.setItem('entry-provider:global-conversation', `${provider.plugin.id}:${provider.view.id}`);
-  const existing = [...windows.values()].find(item => item.plugin.id === provider.plugin.id && item.entryViewId === provider.view.id);
-  if (existing) { manager.restore(existing); return; }
-  manager.open(provider.plugin, provider.view);
-}
 // Confirmation originates in the trusted desktop frame; plugins cannot approve their own effects.
 api.events.capabilityApproval?.(request => run(async () => {
   const allowed = await modal(request.title, ({ body, actions, finish }) => {
@@ -337,3 +350,5 @@ api.events.capabilityApproval?.(request => run(async () => {
   });
   await api.capabilities.approve(request.invocationId, Boolean(allowed));
 }));
+
+mountPluginMessages();

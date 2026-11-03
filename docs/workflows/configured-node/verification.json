@@ -1,0 +1,43 @@
+{
+  "checkedAt": "2026-11-03T06:50:35.528Z",
+  "version": "0.5.60",
+  "integrity": "passed",
+  "fileCount": 7960,
+  "credentialsIncluded": false,
+  "packagedRuntime": [
+    "javascript:passed",
+    "python:passed"
+  ],
+  "archive": "plugin-dev/dist/work-flow-0.5.60.plg",
+  "sha256": "b04be1dc21feebe61e2346bb6500ee211e408ec91502ad43059e8dd1677ea02a",
+  "relatedTests": {
+    "passed": 55,
+    "failed": 0,
+    "pluginRegressionPassedExcludingKnownTest": 10
+  },
+  "knownExistingFailure": {
+    "file": "plugin-dev/work-flow/test/plugin.test.js",
+    "test": "启用固定周期后插件会自动触发，停用后停止",
+    "reason": "Expected trigger modes omit daily; existing implementation includes daily",
+    "modified": false
+  },
+  "independentWorkflowTests": [
+    "orders-script.workflow.json",
+    "inventory-config.workflow.json"
+  ],
+  "existingFinancialWorkflowModified": false,
+  "actualDatabaseQueries": 0,
+  "actualFeishuMessages": 0,
+  "actualModelCalls": 0,
+  "mcp": {
+    "mockedAdapterTests": "passed",
+    "liveServiceDiscoveryVerified": false,
+    "liveToolInvocationVerified": false
+  },
+  "nativeHelperLanguages": [
+    "javascript",
+    "python"
+  ],
+  "platformActuallyVerified": "macOS",
+  "review": "no remaining confirmed findings"
+}

@@ -1,0 +1,5 @@
+{
+  "database": "阿根廷",
+  "limit": 100,
+  "sql": "SELECT CAST(l.application_id AS CHAR) AS application_id,\nCAST(l.id AS CHAR) AS loan_order_id,\nCAST(p.id AS CHAR) AS payment_record_id,\np.proxy_id AS channel_id,\np.status AS payment_status,\nl.payment_code AS channel_order_no,\nDATE_FORMAT(a.application_time, '%Y-%m-%d %H:%i:%s') AS application_time,\nDATE_FORMAT(p.create_time, '%Y-%m-%d %H:%i:%s') AS payment_create_time\nFROM ar.loan_order_info l\nJOIN ar.payment_record p ON p.order_id = l.id\nLEFT JOIN ar.loan_application_info a ON a.id = l.application_id\nWHERE l.application_id IN (468416,468420,468421)\nAND p.proxy_id = 20\nAND p.status = 2\nAND p.id > 0\nORDER BY p.id\nLIMIT 100"
+}

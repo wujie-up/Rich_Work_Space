@@ -2,8 +2,35 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { createCodexAdapter } from '../src/main/common/adapters/codex.js';
+import { createClaudeAdapter } from '../src/main/common/adapters/claude.js';
 import { createCustomCliAdapter } from '../src/main/common/adapters/custom-cli.js';
 import { temporaryStore } from '../../../desk/test/helpers.js';
+
+test('Codex restoration explicitly selects the saved working directory after a project move', () => {
+  const cwd = '/new workspace/project';
+  for (const mode of ['resume', 'fork']) {
+    const { args } = createCodexAdapter().buildLaunch({ mode, cwd, contextId: 'original-thread', sessionDataDir: '/tmp/session' });
+    assert.ok(args.includes('--cd'));
+    assert.equal(args[args.indexOf('--cd') + 1], cwd);
+    assert.deepEqual(args.slice(-2), [mode, 'original-thread']);
+  }
+  const fresh = createCodexAdapter().buildLaunch({ mode: 'new', cwd, sessionDataDir: '/tmp/session' });
+  assert.equal(fresh.args.includes('--cd'), false);
+});
+
+test('native launches preserve group role instructions in fresh and restored contexts', () => {
+  const roleInstructions = '工作台会话组："开发组"\n普通进度只保存在本地';
+  for (const mode of ['new', 'resume', 'fork']) {
+    const launch = createCodexAdapter().buildLaunch({ mode, contextId: 'thread', sessionDataDir: '/tmp/session', roleInstructions });
+    assert.ok(launch.args.includes(`developer_instructions=${JSON.stringify(roleInstructions)}`));
+    if (mode !== 'new') { assert.deepEqual(launch.args.slice(-2), [mode, 'thread']); }
+  }
+  for (const mode of ['new', 'resume']) {
+    const launch = createClaudeAdapter().buildLaunch({ mode, contextId: 'thread', sessionDataDir: '/tmp/session', roleInstructions });
+    assert.equal(launch.args[launch.args.indexOf('--append-system-prompt') + 1], roleInstructions);
+    assert.deepEqual(launch.args.slice(-2), mode === 'resume' ? ['--resume', 'thread'] : ['--session-id', 'session']);
+  }
+});
 
 test('Codex offers the three native approval modes with explicit reviewer and sandbox settings', () => {
   const adapter = createCodexAdapter();
@@ -76,6 +103,19 @@ test('Codex permissions, exact restore/fork context, chunked states and root con
   assert.equal(await adapter.resolveContext({ sessionDataDir: store.root }), undefined, 'interleaved initializations cannot be paired safely');
   await writeFile(`${store.root}/codex-tui.log`, root(thread));
   assert.equal(await adapter.resolveContext({ sessionDataDir: store.root }), thread, 'a single legacy root is supported');
+});
+
+test('persisted Codex subagents do not clear or replace the foreground context', async t => {
+  const store = await temporaryStore(t);
+  const thread = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const child = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const initialization = 'thread_spawn{otel.name="thread_spawn"}:session_init:'
+    + 'session_init.thread_persistence{otel.name="session_init.thread_persistence" session_init.ephemeral=false}: '
+    + 'codex_core::session::session: new\n';
+  const root = id => `INFO session_loop{thread_id=${id}}: codex_core::session: new\n`;
+  await writeFile(`${store.root}/codex-tui.log`, `INFO ${initialization}${root(thread)}`
+    + `INFO session_loop{thread_id=${thread}}:submission_dispatch{codex.op="turn_input"}:${initialization}${root(child)}`);
+  assert.equal(await createCodexAdapter().resolveContext({ sessionDataDir: store.root }), thread);
 });
 
 test('custom CLI preserves argv and advertises no invented advanced capability', () => {

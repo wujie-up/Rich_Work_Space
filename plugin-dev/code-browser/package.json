@@ -1,0 +1,9 @@
+{
+  "name": "work-desk-code-browser",
+  "version": "0.1.39",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

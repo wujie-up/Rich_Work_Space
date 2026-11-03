@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { lstat, readdir, readFile, readlink, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
+import { isPrimaryTurnEvent } from './conversations.js';
+import { isElicitationRequest, pendingRequests } from '../../shared/contracts.js';
 
 const terminal = state => ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(state);
 const assertTask = (condition, message) => {
@@ -88,16 +90,16 @@ export class AgentTasks {
     assertTask(task, '任务不存在或句柄已失效');
     return task;
   }
-  start(kind, input) {
+  start(kind, input, execution) {
     // Coalesce retries before asynchronous path validation can yield to another start.
     if (this.starts.has(input.taskKey)) { return this.starts.get(input.taskKey); }
-    const work = this.startOnce(kind, input).finally(() => this.starts.delete(input.taskKey));
+    const work = this.startOnce(kind, input, execution).finally(() => this.starts.delete(input.taskKey));
     this.starts.set(input.taskKey, work);
     return work;
   }
-  async startOnce(kind, input) {
+  async startOnce(kind, input, execution) {
     assertTask(/^[a-f0-9]{64}$/.test(input.taskKey), '无效任务句柄');
-    assertTask(typeof input.prompt === 'string' && input.prompt.trim() && input.prompt.length <= 90000, '任务文本必须为 1–90000 字符');
+    assertTask(typeof input.prompt === 'string' && input.prompt.trim(), '任务文本不能为空');
     if (kind === 'mcp-debug') {
       assertTask(/^[a-zA-Z0-9_-]{1,64}$/.test(input.serviceId) && typeof input.providerId === 'string' && input.providerId,
         'MCP 调试需要目标服务及提供方');
@@ -139,6 +141,7 @@ export class AgentTasks {
     // A cancel may arrive while paths are being resolved or before host approval finishes.
     if (this.records.has(input.taskKey)) { return { state: this.get(input.taskKey).state }; }
     const task = { taskKey: input.taskKey, kind, cwd, files, state: 'starting', createdAt: Date.now() };
+    if (execution) { task.execution = execution; }
     if (kind === 'mcp-debug') { task.mcpDebug = { serviceId: input.serviceId, pluginId: input.providerId }; }
     this.records.set(input.taskKey, task);
     await this.persist();
@@ -161,7 +164,17 @@ export class AgentTasks {
     if (task.state === 'cancelled') { return; }
     // Debug may use its target MCP but must retain the existing read-only native sandbox.
     const scope = task.mcpDebug ? { kind: 'plan', mcpDebug: task.mcpDebug } : { kind: task.kind, files: task.files };
-    const record = await this.conversations.create({ cwd: task.cwd, task: scope });
+    if (task.execution?.background) { scope.background = task.execution.background; }
+    const record = task.execution?.conversationId
+      ? await this.conversations.read(task.execution.conversationId)
+      : await this.conversations.create({ cwd: task.cwd, task: scope });
+    if (task.execution?.conversationId) {
+      if (record.cwd !== task.cwd || record.task?.kind !== task.kind) { throw Error('节点会话的目录或模式不能在运行中改变'); }
+      const current = await this.conversations.loadRecord(record.id);
+      current.task = scope;
+      await this.conversations.persist(current);
+    }
+    task.eventStartSequence = record.events.length;
     task.conversationId = record.id;
     await this.persist();
     if (task.state === 'cancelled') { return; }
@@ -177,14 +190,15 @@ export class AgentTasks {
   async read({ taskKey }) {
     const task = this.get(taskKey);
     if (task.conversationId && !terminal(task.state)) {
-      const record = this.conversations.read(task.conversationId);
-      const answered = new Set(record.events.filter(event => event.method === 'approval/answered').map(event => event.params.requestId));
-      task.requests = record.events.filter(event => event.id !== undefined && !answered.has(event.id)
-        && (event.method.endsWith('/requestApproval') || event.method === 'item/tool/requestUserInput'));
-      if (record.state === 'idle' && record.events.some(event => event.method === 'turn/completed')) {
+      const conversation = await this.conversations.read(task.conversationId);
+      const record = { ...conversation, events: conversation.events.filter(event => event.sequence > (task.eventStartSequence || 0)) };
+      task.requests = pendingRequests(record.events);
+      const completion = record.events.findLast(event => event.method === 'turn/completed' && isPrimaryTurnEvent(record, event));
+      if (record.state === 'idle' && completion) {
         try {
-          await this.finish(task, record);
+          await this.finish(task, record, completion);
         } catch (error) {
+          console.error('[agent:task-result-failed]', { taskKey, conversationId: task.conversationId, error });
           task.state = 'failed';
           task.error = error.message;
           await this.persist();
@@ -203,14 +217,25 @@ export class AgentTasks {
         await this.persist();
       }
     }
-    const { before, after, original, cwd, files, taskKey: secret, conversationId, ...publicTask } = task;
+    const { before, after, original, cwd, files, taskKey: secret, conversationId, execution, eventStartSequence, ...publicTask } = task;
     return structuredClone(publicTask);
   }
-  async finish(task, record) {
-    task.output = record.events.filter(event => event.method === 'item/completed' && event.params.item?.type === 'agentMessage')
-      .map(event => event.params.item.text).join('\n');
+  async finish(task, record, completion) {
+    const events = record.events.filter(event => isPrimaryTurnEvent(record, event, completion.params.turn.id));
+    const messages = events.filter(event => event.method === 'item/completed' && event.params.item?.type === 'agentMessage')
+      .map(event => event.params.item);
+    // Completion snapshots can recover a final answer when no separate item/completed was emitted.
+    for (const item of completion.params.turn.items || []) {
+      if (item.type === 'agentMessage' && !messages.some(message => message.id === item.id)) {
+        messages.push(item);
+      }
+    }
+    const final = messages.filter(item => item.phase === 'final_answer');
+    task.output = (final.length ? final : messages.filter(item => !item.phase)).map(item => item.text).join('\n');
     if (!task.output) {
-      task.output = record.events.filter(event => event.method === 'item/agentMessage/delta').map(event => event.params.delta).join('');
+      const commentary = new Set(events.filter(event => event.params?.item?.phase === 'commentary').map(event => event.params.item.id));
+      task.output = events.filter(event => event.method === 'item/agentMessage/delta' && !commentary.has(event.params.itemId))
+        .map(event => event.params.delta).join('');
     }
     if (task.kind === 'code') {
       task.after = await snapshot(task.cwd);
@@ -238,9 +263,11 @@ export class AgentTasks {
     assertTask(request, '审批或问题已失效');
     if (request.method === 'item/tool/requestUserInput') {
       this.conversations.answer(task.conversationId, input.requestId, input.answers);
+    } else if (isElicitationRequest(request)) {
+      this.conversations.elicit(task.conversationId, input.requestId, input.decision || 'accept', input.answers);
     } else {
-      // Planning may never promote a read-only thread into write access through an approval.
-      assertTask(!['plan', 'mcp-debug'].includes(task.kind) || input.decision !== 'accept', '计划任务只读，不能批准写入或提权');
+      // Ordinary plans remain read only; workflow background tasks carry their own explicit authorization.
+      assertTask((task.kind === 'plan' && task.execution?.background) || !['plan', 'mcp-debug'].includes(task.kind) || input.decision !== 'accept', '计划任务只读，不能批准写入或提权');
       this.conversations.approve(task.conversationId, input.requestId, input.decision);
     }
     return { accepted: true };
@@ -279,7 +306,7 @@ export class AgentTasks {
 }
 export async function registerTasks(capabilities, tasks) {
   const common = { taskKey: { type: 'string', minLength: 64, maxLength: 64 } };
-  const start = { ...common, cwd: { type: 'string' }, prompt: { type: 'string', maxLength: 90000 },
+  const start = { ...common, cwd: { type: 'string' }, prompt: { type: 'string', minLength: 1 },
     files: { type: 'array', items: { type: 'string' }, maxItems: 30 } };
   for (const [id, title, properties, required, effects, handler] of [
     ['agent.mcp.debug.start.v1', 'MCP AI 调试', { ...common, prompt: start.prompt, serviceId: { type: 'string', maxLength: 64 },
@@ -290,7 +317,8 @@ export async function registerTasks(capabilities, tasks) {
     ['agent.menu.code.start.v1', '菜单代码 Agent', start, ['taskKey', 'cwd', 'prompt', 'files'], ['workspace.write'], input => tasks.start('code', input)],
     ['agent.task.read.v1', '读取 Agent 任务', common, ['taskKey'], ['workspace.read'], input => tasks.read(input)],
     ['agent.task.respond.v1', '响应 Agent 审批', { ...common, requestId: { anyOf: [{ type: 'string' }, { type: 'number' }] },
-      decision: { type: 'string', enum: ['accept', 'decline', 'cancel'] }, answers: { type: 'object' } }, ['taskKey', 'requestId'],
+      decision: { type: 'string', enum: ['accept', 'decline', 'cancel'] },
+      answers: { type: 'object', description: '问题回答或 MCP 表单内容；保留字符串、数字、布尔与数组类型。URL 授权只传 decision。' } }, ['taskKey', 'requestId'],
       ['workspace.write'], input => tasks.respond(input)],
     ['agent.task.cancel.v1', '停止 Agent 任务', common, ['taskKey'], ['workspace.read'], input => tasks.cancel(input)]
   ]) {

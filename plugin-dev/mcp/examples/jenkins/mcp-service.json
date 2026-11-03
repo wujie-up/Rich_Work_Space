@@ -1,0 +1,10 @@
+{
+  "name": "Jenkins · 部署与结果回查",
+  "language": "javascript",
+  "entry": "server.mjs",
+  "fields": [
+    { "name": "JENKINS_URL", "label": "Jenkins 地址（默认 http://192.168.3.21:8080/）" },
+    { "name": "JENKINS_USERNAME", "label": "Jenkins 账号", "required": true },
+    { "name": "JENKINS_PASSWORD", "label": "Jenkins 密码", "secret": true, "required": true }
+  ]
+}

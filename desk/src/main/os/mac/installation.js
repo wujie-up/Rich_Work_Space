@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const register = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
-const installed = '/Applications/DeckPg.app';
+const installed = '/Applications/DeskPG.app';
 const identifier = 'local.workdesk.desktop';
 
 // Launch Services and Spotlight feed separate app lists; checking only registration misses indexed build copies.
@@ -25,10 +25,10 @@ export async function cleanApplicationEntries(run = promisify(execFile)) {
   const indexed = (await invoke('/usr/bin/mdfind', [`kMDItemCFBundleIdentifier == "${identifier}"`])).stdout.trim()
     .split('\n').filter(Boolean);
   if (remaining.length !== 1 || remaining[0] !== installed) {
-    throw Error(`DeckPg Launch Services 入口异常：${remaining.join(', ')}`);
+    throw Error(`DeskPG Launch Services 入口异常：${remaining.join(', ')}`);
   }
   if (indexed.some(path => path !== installed)) {
-    throw Error(`DeckPg Spotlight 存在重复入口：${indexed.filter(path => path !== installed).join(', ')}`);
+    throw Error(`DeskPG Spotlight 存在重复入口：${indexed.filter(path => path !== installed).join(', ')}`);
   }
   console.info('[host:installation-entries]', { bundleId: identifier, installed, removed: duplicates.length, indexed: indexed.length });
 }

@@ -32,7 +32,8 @@ wss.on('connection', socket => socket.on('message', data => {
   socket.send(JSON.stringify({ type: 'response.completed', response: { id: 'resp_probe', object: 'response', status: 'completed',
     created_at: Math.floor(Date.now() / 1000), output: [item], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } }));
 }));
-const record = { id: randomUUID(), windowId: randomUUID(), engineId: 'codex', state: 'idle' };
+const record = { id: randomUUID(), windowId: randomUUID(), engineId: 'codex', state: 'idle',
+  ...(process.argv[4] === 'terminal' ? { protocol: 'managed-terminal' } : {}) };
 const manager = new CaptureManager({ root: join(root, 'logs'), conversations: { read: () => record, engines: new Map() } });
 let proxy;
 try {
@@ -52,8 +53,14 @@ try {
   const original = await manager.target(record, launch);
   assert.equal(original.upstream, mode === 'api' ? 'https://api.openai.com/v1' : 'https://chatgpt.com/backend-api/codex');
   manager.destination = async () => ({ upstream: `http://127.0.0.1:${upstream.address().port}/v1` });
-  await manager.handle({ action: 'configure', instanceId: manager.instanceId, windowId: record.windowId, conversationId: record.id, ownerId: randomUUID(), enabled: true });
+  const selection = { action: 'configure', instanceId: manager.instanceId, windowId: record.windowId,
+    conversationId: record.id, ownerId: randomUUID(), enabled: true };
+  if (!record.protocol) { await manager.handle(selection); }
   const { args } = await manager.prepare(record, launch);
+  if (record.protocol) {
+    assert.equal(manager.relays.get(record.id).isRecording(), false);
+    await manager.handle(selection);
+  }
   proxy = manager.relays.get(record.id);
   const child = spawn(binary, [...args, '-c', 'model="gpt-5.4"',
     'exec', '--skip-git-repo-check', '--sandbox', 'read-only', 'Reply CAPTURE_SYNTHETIC_ONLY'], {
@@ -72,7 +79,7 @@ try {
   assert.ok(!logs.includes(jwt));
   assert.ok(logs.includes('CAPTURE_SYNTHETIC_ONLY'));
   assert.equal(code, 0, `Native probe did not complete cleanly: ${output.slice(-2000)}`);
-  console.log(JSON.stringify({ result: 'PASS', authMode: mode, upstream: 'local mock only', requests: received, nativeExit: code, authRedacted: true }));
+  console.log(JSON.stringify({ result: 'PASS', authMode: mode, terminalPreconnected: Boolean(record.protocol), upstream: 'local mock only', requests: received, nativeExit: code, authRedacted: true }));
 } finally {
   await manager.close();
   wss.close();

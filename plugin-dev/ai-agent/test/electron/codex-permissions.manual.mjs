@@ -14,7 +14,7 @@ for (const key of Object.keys(process.env)) {
 const cleanup = [];
 const packaged = process.env.WORK_DESK_PACKAGED === '1';
 const { page, data } = await launch({ after: (fn) => cleanup.push(fn) }, packaged
-  ? { executablePath: resolve('desk/dist/releases/mac-arm64/DeckPg.app/Contents/MacOS/DeckPg'), reducedPath: true } : {});
+  ? { executablePath: resolve('desk/dist/releases/mac-arm64/DeskPG.app/Contents/MacOS/DeskPG'), reducedPath: true } : {});
 const cwd = join(data, '权限验证 工作目录');
 await mkdir(cwd);
 await mkdir(resolve('.test-results'), { recursive: true });

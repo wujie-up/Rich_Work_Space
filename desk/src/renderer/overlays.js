@@ -30,7 +30,9 @@ export function mountOverlays(surface, { closePlugin, openWindow, openView }) {
     }
     const size = view.presentation;
     const state = { x: Number.isFinite(saved?.x) ? saved.x : layer.clientWidth - size.width,
-      y: Number.isFinite(saved?.y) ? saved.y : 0, collapsed: saved?.collapsed === true };
+      y: Number.isFinite(saved?.y) ? saved.y : 0, collapsed: saved?.collapsed === true,
+      width: Number.isFinite(saved?.width) ? Math.max(240, saved.width) : size.width,
+      height: Number.isFinite(saved?.height) ? Math.max(100, saved.height) : size.height };
     let touched = typeof saved?.collapsed === 'boolean';
     const root = el('section', { class: 'plugin-overlay', 'data-plugin': plugin.id, 'aria-label': view.title });
     const title = el('span', { class: 'overlay-name', text: view.title });
@@ -42,8 +44,8 @@ export function mountOverlays(surface, { closePlugin, openWindow, openView }) {
     let dispose;
 
     function layout() {
-      const width = Math.min(state.collapsed ? size.collapsedWidth : size.width, layer.clientWidth);
-      const height = Math.min(state.collapsed ? size.collapsedHeight : size.height, layer.clientHeight);
+      const width = Math.min(state.collapsed ? size.collapsedWidth : state.width, layer.clientWidth);
+      const height = Math.min(state.collapsed ? size.collapsedHeight : state.height, layer.clientHeight);
       state.x = Math.max(0, Math.min(state.x, layer.clientWidth - width));
       state.y = Math.max(0, Math.min(state.y, layer.clientHeight - height));
       Object.assign(root.style, { left: `${state.x}px`, top: `${state.y}px`, width: `${width}px`, height: `${height}px` });
@@ -51,19 +53,26 @@ export function mountOverlays(surface, { closePlugin, openWindow, openView }) {
       body.hidden = state.collapsed;
       minimize.hidden = state.collapsed;
       expand.hidden = !state.collapsed;
+      resize.hidden = state.collapsed;
       dispose?.send({ type: 'desk:presentation', collapsed: state.collapsed });
     }
     function collapse(value) {
+      const keyboardFocus = header.querySelector(':focus-visible');
       state.collapsed = value;
       touched = true;
       layout();
       save();
-      (value ? expand : minimize).focus();
+      if (keyboardFocus) {
+        (value ? expand : minimize).focus();
+      } else {
+        header.focus();
+      }
     }
     const minimize = iconButton(icons.minimize, '收起悬浮面板', () => collapse(true));
     const expand = iconButton('m5 15 7-7 7 7', '展开悬浮面板', () => collapse(false));
-    header.append(el('div', { class: 'overlay-actions' },
-      ...(!plugin.singleInstance ? [iconButton(icons.open, '在窗口中打开', () => openWindow(plugin, view))] : []), minimize, expand,
+    const open = iconButton(icons.open, '在窗口中打开', () => openWindow(plugin, view));
+    open.hidden = Boolean(plugin.singleInstance);
+    header.append(el('div', { class: 'overlay-actions' }, open, minimize, expand,
       iconButton(icons.close, '关闭悬浮插件', () => closePlugin(plugin.id))));
     let drag;
     header.addEventListener('pointerdown', event => {
@@ -92,7 +101,38 @@ export function mountOverlays(surface, { closePlugin, openWindow, openView }) {
         save();
       }
     });
-    root.append(header, body);
+    const resize = iconButton('M7 19 19 7M13 19l6-6', '调整悬浮面板大小', () => {}, 'overlay-resize');
+    resize.title = '拖动或使用方向键调整大小';
+    let resizing;
+    function resizeTo(width, height) {
+      state.width = Math.min(Math.max(240, width), layer.clientWidth);
+      state.height = Math.min(Math.max(100, height), layer.clientHeight);
+      layout();
+    }
+    resize.addEventListener('pointerdown', event => {
+      if (event.button !== 0) {
+        return;
+      }
+      const bounds = root.getBoundingClientRect();
+      resizing = { x: event.clientX, y: event.clientY, width: bounds.width, height: bounds.height };
+      resize.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+    resize.addEventListener('pointermove', event => {
+      if (resizing && resize.hasPointerCapture(event.pointerId)) {
+        resizeTo(resizing.width + event.clientX - resizing.x, resizing.height + event.clientY - resizing.y);
+      }
+    });
+    resize.addEventListener('lostpointercapture', () => { resizing = null; save(); });
+    resize.addEventListener('keydown', event => {
+      const delta = { ArrowLeft: [-16, 0], ArrowRight: [16, 0], ArrowUp: [0, -16], ArrowDown: [0, 16] }[event.key];
+      if (delta) {
+        event.preventDefault();
+        resizeTo(root.clientWidth + 2 + delta[0], root.clientHeight + 2 + delta[1]);
+        save();
+      }
+    });
+    root.append(header, body, resize);
     layer.append(root);
     layout();
     dispose = mountPluginView(body, plugin, view, { openView,
@@ -106,10 +146,14 @@ export function mountOverlays(surface, { closePlugin, openWindow, openView }) {
         }
       }, presentation: () => ({ collapsed: state.collapsed })
     });
-    mounted.set(key, { plugin, root, dispose, layout, restore: () => collapse(false) });
+    mounted.set(key, { plugin, root, dispose, layout, restore: () => collapse(false),
+      updatePolicy(record) {
+        Object.assign(plugin, record);
+        open.hidden = Boolean(plugin.singleInstance);
+      } });
   }
 
-  function refresh(next) {
+  function refresh(next, openId) {
     records = next;
     const available = records.filter(plugin => plugin.state === 'enabled' && plugin.running);
     for (const id of failed) {
@@ -124,7 +168,10 @@ export function mountOverlays(surface, { closePlugin, openWindow, openView }) {
     }
     for (const plugin of available.filter(plugin => !failed.has(plugin.id))) {
       for (const view of plugin.views.filter(view => view.presentation?.type === 'overlay')) {
-        if (!mounted.has(`${plugin.id}:${view.id}`)) {
+        const item = mounted.get(`${plugin.id}:${view.id}`);
+        if (item) {
+          item.updatePolicy(plugin);
+        } else if (plugin.id === openId) {
           mount(plugin, view);
         }
       }
@@ -136,9 +183,11 @@ export function mountOverlays(surface, { closePlugin, openWindow, openView }) {
     fail(id) { failed.add(id); remove(id); },
     restore(id) {
       failed.delete(id);
-      refresh(records);
+      const existing = [...mounted.values()].filter(item => item.plugin.id === id);
+      // Background service activity alone must not open an unsolicited desktop panel.
+      refresh(records, id);
       const items = [...mounted.values()].filter(item => item.plugin.id === id);
-      items.forEach(item => item.restore());
+      existing.forEach(item => item.restore());
       return items.length > 0;
     },
     destroy() { observer.disconnect(); [...mounted.values()].forEach(item => remove(item.plugin.id)); layer.remove(); } };

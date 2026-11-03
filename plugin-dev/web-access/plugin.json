@@ -1,0 +1,31 @@
+{
+  "id": "web-access",
+  "name": "远程访问",
+  "version": "0.1.24",
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "type": "application",
+  "showIcon": true,
+  "singleInstance": true,
+  "loadOnStartup": false,
+  "background": "service",
+  "requiredHostFeatures": [
+    "desk.service-transport.v1"
+  ],
+  "main": "src/main/common/index.js",
+  "renderer": "src/renderer/app.js",
+  "icon": "ico/icon.svg",
+  "author": "Work Desk",
+  "description": "通过已配对的 macOS、iOS 助手连接工作台 Web，优先直连，允许加密中继。",
+  "closeDescription": "关闭内置电脑助手，断开全部远程设备并撤销远程网页会话；保留配对设备和本机身份。",
+  "settings": {
+    "entry": "dist/renderer/index.html"
+  },
+  "views": [
+    {
+      "id": "main",
+      "title": "远程访问",
+      "entry": "dist/renderer/index.html"
+    }
+  ]
+}

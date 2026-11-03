@@ -1,0 +1,27 @@
+{
+  "id": "code-browser",
+  "name": "coding",
+  "version": "0.1.39",
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "type": "application",
+  "showIcon": true,
+  "singleInstance": true,
+  "loadOnStartup": true,
+  "background": "service",
+  "requiredHostFeatures": [
+    "desk.capabilities.v1"
+  ],
+  "main": "src/main/common/index.js",
+  "renderer": "src/renderer/app.js",
+  "icon": "ico/icon.svg",
+  "description": "编辑与浏览本地 Java、Vue、JS 等源码，管理 Git 分支、提交与版本差异，执行 Maven 编译并向 Agent 提供能力。",
+  "closeDescription": "停止查询、Git、Maven 编译和 Spring Boot 进程，保留项目目录配置及已生成的编译文件。",
+  "views": [
+    {
+      "id": "main",
+      "title": "coding",
+      "entry": "dist/renderer/index.html"
+    }
+  ]
+}

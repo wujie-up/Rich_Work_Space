@@ -1,4 +1,5 @@
 import { fail } from './errors.js';
+import { parallelGroup, parallelTypes } from './parallel-flow.js';
 import { stringify } from './template.js';
 
 export const isBranch = type => ['flow.route', 'flow.loop'].includes(type);
@@ -25,6 +26,9 @@ export function descendants(edges, nodeId) {
 
 // Only explicit loop continue edges may go backwards; every other dependency stays a DAG.
 export function executionOrder(workflow) {
+  for (const node of workflow.nodes.filter(node => node.type === 'flow.parallel')) {
+    parallelGroup(workflow, node);
+  }
   const edges = forwardEdges(workflow);
   const remaining = new Set(workflow.nodes.map(node => node.id));
   const order = [];
@@ -49,6 +53,15 @@ export function executionOrder(workflow) {
       const limit = Number(node.params.maxIterations ?? 3);
       if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
         throw fail('INVALID_ARGUMENT', `${node.title}：最大轮次必须为 1–100 的整数`);
+      }
+      for (const name of ['maxTotalIterations', 'maxStagnantIterations']) {
+        const value = Number(node.params[name] ?? 0);
+        if (!Number.isInteger(value) || value < 0 || value > 100) {
+          throw fail('INVALID_ARGUMENT', `${node.title}：${name} 必须为 0–100 的整数，0 表示不启用`);
+        }
+      }
+      if (Number(node.params.maxStagnantIterations) && !String(node.params.progressInput || '').trim()) {
+        throw fail('INVALID_ARGUMENT', `${node.title}：启用无进展限制时必须填写已验证关闭的问题编号输入`);
       }
       const back = outgoing.find(edge => edge.branch === 'continue');
       const target = workflow.nodes.find(item => item.id === back?.to);
@@ -96,6 +109,7 @@ export function controlTypes() {
     { name: 'expected', label: '比较值（true / false / 数字 / 文本）', kind: 'text', default: 'true' }
   ];
   return [
+    ...parallelTypes(),
     { type: 'flow.route', label: '条件路由', summary: '按条件选择 true / false 分支，或按 Agent 输出的固定分支值路由。',
       io: 'transform', kind: 'flow', role: 'step', timeoutMs: 5000,
       params: [{ name: 'mode', label: '路由方式', kind: 'select', default: 'condition', options: [
@@ -104,11 +118,16 @@ export function controlTypes() {
       async resolve(context) {
         return { route: context.params.mode === 'value' ? stringify(context.value('input')) : String(condition(context)) };
       } },
-    { type: 'flow.loop', label: '条件循环', summary: '条件满足时走 continue 返回循环体，否则走 exit；达到最大轮次后等待人工决定。',
+    { type: 'flow.loop', label: '条件循环', summary: '条件满足时走 continue 返回循环体，否则走 exit；支持批次确认、总轮次硬上限与无进展暂停。',
       io: 'transform', kind: 'flow', role: 'step', timeoutMs: 5000,
-      params: [...conditions, { name: 'maxIterations', label: '最大轮次（1–100，达到后等待确认）', kind: 'number', default: 3 }],
+      params: [...conditions, { name: 'maxIterations', label: '每批轮数（1–100，达到后等待确认）', kind: 'number', default: 3 },
+        { name: 'maxTotalIterations', label: '总轮次硬上限（0 不限制，最多100）', kind: 'number', default: 0 },
+        { name: 'maxStagnantIterations', label: '连续无进展轮数（0 不限制，最多100）', kind: 'number', default: 0 },
+        { name: 'progressInput', label: '累积已验证关闭的问题编号数组', kind: 'textarea', rows: 2, default: '',
+          placeholder: '{{review.output.resolvedIssueIds}}' }],
       async resolve(context) {
-        return { route: condition(context) ? 'continue' : 'exit' };
+        return { route: condition(context) ? 'continue' : 'exit',
+          ...(Number(context.params.maxStagnantIterations) ? { progress: context.value('progressInput') } : {}) };
       } }
   ];
 }

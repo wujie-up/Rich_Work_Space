@@ -1,5 +1,21 @@
-.session-status{display:inline-flex;flex-shrink:0;width:27px;height:30px;color:var(--muted)}.session-status svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
-.session-status[data-kind=working]{color:var(--accent)}.session-status[data-kind=waiting]{color:#93cbaa}.session-status[data-kind=blocked]{color:#efbb7d}
-.typing{animation:typing .55s steps(2,end) infinite}.steam{animation:steam 2s ease-in-out infinite}.ringing{transform-origin:16px 10px;animation:ring .3s ease-in-out infinite alternate}.ring-lines{animation:typing .4s steps(2,end) infinite}
-@keyframes typing{50%{transform:translateY(2px);opacity:.4}}@keyframes steam{50%{transform:translateY(-2px);opacity:.35}}@keyframes ring{to{transform:rotate(10deg)}}
+.session-status{display:inline-flex;flex-shrink:0;width:27px;height:30px;color:var(--muted)}
+.session-status svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.session-status:is([data-kind=working],[data-kind=waiting],[data-kind=blocked],[data-kind=offline]){width:40px}
+.session-status[data-kind=working]{color:var(--accent)}
+.session-status[data-kind=waiting]{color:#93cbaa}
+.session-status[data-kind=blocked]{color:#e77e7e}
+:root[data-theme=light] .session-status[data-kind=waiting]{color:#4e8c63}
+:root[data-theme=light] .session-status[data-kind=blocked]{color:#bc5454}
+.kettle-heat{fill:currentColor;transform-origin:32px 46px;animation:kettle-heat .8s ease-in-out infinite}
+.session-status[data-kind=working] .kettle-water{animation:kettle-water 1.2s ease-in-out infinite}
+.session-status[data-kind=blocked] .kettle-lid{animation:kettle-lid .8s ease-in-out infinite}
+.kettle-steam{animation:kettle-steam 1.6s ease-in-out infinite}
+.kettle-steam:nth-of-type(2){animation-delay:-.5s}
+.kettle-steam:nth-of-type(3){animation-delay:-1s}
+@keyframes kettle-heat{0%,100%{opacity:.65;transform:scaleY(.65)}50%{opacity:1;transform:scaleY(1)}}
+@keyframes kettle-water{0%,100%{transform:translateY(0)}50%{transform:translateY(-1px)}}
+@keyframes kettle-lid{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-2px)}}
+@keyframes kettle-steam{0%,100%{opacity:.45;transform:translateY(1px)}50%{opacity:1;transform:translateY(-1px)}}
 @media(prefers-reduced-motion:reduce){.session-status svg *{animation:none!important}}
+
+.session-status[data-kind=offline]{color:var(--muted)}

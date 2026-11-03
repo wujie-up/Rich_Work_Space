@@ -17,6 +17,9 @@ test('分发包离开仓库仍可加载真实 SDK 和 gRPC 资源，不包含开
   });
   const root = join(temp, 'plugin');
   assert.equal((await inspectPackage(root)).version, manifest.version);
+  const index = await readFile(join(root, 'dist/renderer/index.html'), 'utf8');
+  assert.ok(index.includes(`src="app.js?v=${manifest.version}"`));
+  assert.ok(index.includes(`href="app.css?v=${manifest.version}"`));
   const names = await readdir(root);
   assert.ok(!names.some(name => ['test', 'build', 'plugin-data', 'session-test'].includes(name)));
   await access(join(root, 'node_modules/google-protobuf/LICENSE.md'));

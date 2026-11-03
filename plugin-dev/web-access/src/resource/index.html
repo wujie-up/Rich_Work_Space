@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>远程访问</title><link rel="stylesheet" href="./app.css"></head>
+<body><main>
+  <header class="toolbar">
+    <span id="status" role="status">正在读取状态</span>
+    <div class="actions">
+      <button id="toggle" class="icon-button primary" title="开启远程访问" aria-label="开启远程访问"></button>
+      <button id="invite" class="icon-button primary" title="创建两分钟配对邀请" aria-label="创建两分钟配对邀请"></button>
+      <button id="assistant" class="icon-button primary" title="打开内置电脑助手，连接其他工作台" aria-label="打开内置电脑助手，连接其他工作台"></button>
+      <span class="help">
+        <button id="help" class="icon-button primary" title="查看连接与流量说明" aria-label="查看连接与流量说明" aria-describedby="connection-help"></button>
+        <span id="connection-help" role="tooltip">优先尝试 P2P 直连，约 8 秒未成功后回退美国公共加密中继；国内免注册节点尚未确认可用，暂时跳过。公共发现及中继协调流量可能出境。总流量上限 10 MiB/s，超限断开。开启访问后可创建两分钟配对邀请，核对助手指纹后确认设备。</span>
+      </span>
+    </div>
+  </header>
+  <p id="error" role="alert"></p>
+  <p class="risk">仅转发工作台 Web 服务。确认绑定即授权设备访问整个工作台及已启用插件，连接后无需账号登录；撤销绑定后立即失效。</p>
+  <section id="invitation" hidden><div class="toolbar"><label for="ticket">配对邀请 <span id="expiry"></span></label><button id="copy" class="icon-button primary" title="复制邀请" aria-label="复制邀请"></button></div><textarea id="ticket" rows="3" readonly spellcheck="false" aria-label="配对邀请"></textarea></section>
+  <section class="pending-section"><h2>待确认设备 <span id="pending-count" class="count">0</span></h2><div id="pending"></div></section>
+  <div class="device-grid">
+    <section><h2>已配对设备 <span id="devices-count" class="count">0</span></h2><div id="devices"></div></section>
+    <section><h2>当前连接 <span id="connections-count" class="count">0</span></h2><div id="connections"></div></section>
+  </div>
+</main><script type="module" src="./app.js"></script></body></html>

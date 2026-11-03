@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { extractFile } from '@electron/asar';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const latestExecutable = resolve('desk/dist/releases.noindex/mac-arm64/DeckPg.app/Contents/MacOS/DeckPg');
+const latestExecutable = resolve('desk/dist/releases.noindex/mac-arm64/DeskPG.app/Contents/MacOS/DeskPG');
 export async function launch(t, { executablePath = process.env.DECKPG_TEST_EXECUTABLE || latestExecutable,
   reducedPath = false, openPlugin = true, prepareData, disabledPlugins = [] } = {}) {
   const { version } = JSON.parse(await readFile(resolve('package.json'), 'utf8'));
@@ -15,7 +15,7 @@ export async function launch(t, { executablePath = process.env.DECKPG_TEST_EXECU
     const bundleVersion = JSON.parse(extractFile(resolve(executablePath, '../../Resources/app.asar'), 'package.json').toString()).version;
     if (bundleVersion !== version) { throw Error(`包版本 ${bundleVersion}，源码版本 ${version}`); }
   } catch (error) {
-    throw Error(`桌面测试必须使用最新 DeckPg 安装包，请先运行 npm run dist:mac。${error.message}`);
+    throw Error(`桌面测试必须使用最新 DeskPG 安装包，请先运行 npm run dist:mac。${error.message}`);
   }
   const data = await mkdtemp(join(tmpdir(), 'Work Desk 中文 '));
   if (prepareData) {
@@ -29,7 +29,7 @@ export async function launch(t, { executablePath = process.env.DECKPG_TEST_EXECU
   if (!actual.packaged || actual.version !== version) {
     await app.close();
     await rm(data, { recursive: true, force: true });
-    throw Error(`DeckPg 安装包版本不匹配：${JSON.stringify(actual)}，期望 ${version}`);
+    throw Error(`DeskPG 安装包版本不匹配：${JSON.stringify(actual)}，期望 ${version}`);
   }
   const hostProcess = app.process();
   t.after(async () => {

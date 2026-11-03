@@ -12,12 +12,15 @@ const functions = new Set(('count sum min max avg coalesce ifnull nullif concat 
 // Credentials and the HTTPS target remain operator configuration; database metadata is discovered separately.
 export function configuration(env = process.env) {
   const url = new URL(env.METABASE_URL || 'https://bi.dbaifin.com');
+  const session = env.METABASE_SESSION?.trim() || '';
+  const username = env.METABASE_USERNAME?.trim() || '';
+  const password = env.METABASE_PASSWORD || '';
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash
-    || !env.METABASE_SESSION?.trim()) {
-    throw invalid('请配置 HTTPS Metabase 地址和有效的 METABASE_SESSION');
+    || Boolean(username) !== Boolean(password) || !(session || (username && password))) {
+    throw invalid('请配置 HTTPS Metabase 地址，以及 METABASE_USERNAME 和 METABASE_PASSWORD；也兼容单独使用 METABASE_SESSION');
   }
   url.pathname = url.pathname.replace(/\/$/, '') + '/api/dataset';
-  return { url, session: env.METABASE_SESSION.trim() };
+  return { url, session, username, password };
 }
 
 // Conservative SQL subset: reject ambiguous syntax instead of trying to parse every database dialect.
@@ -59,27 +62,28 @@ export function queryParameters(input) {
   return { sql, limit };
 }
 
-function redact(value, secret) {
+function redact(value, secrets) {
   if (typeof value === 'string') {
-    const text = value.split(secret).join('[REDACTED]');
+    const text = secrets.filter(Boolean).reduce((text, secret) => text.split(secret).join('[REDACTED]'), value);
     // Configuration columns often contain serialized JSON rather than individual credential columns.
     if (/^\s*[\[{]/.test(text)) {
-      try { return JSON.stringify(redact(JSON.parse(text), secret)); }
+      try { return JSON.stringify(redact(JSON.parse(text), secrets)); }
       catch { /* Non-JSON text still receives inline credential redaction below. */ }
     }
     return text.replace(/((?:password|secret|token|authorization|api[_-]?key|access[_-]?key)[\w-]*[\s"']*[:=][\s"']*)(?:Bearer\s+)?[^\s,"'}\]&]+/gi,
       '$1[REDACTED]');
   }
-  if (Array.isArray(value)) { return value.map(item => redact(item, secret)); }
+  if (Array.isArray(value)) { return value.map(item => redact(item, secrets)); }
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.entries(value).map(([key, item]) =>
-      [key, sensitive.test(key) ? '[REDACTED]' : redact(item, secret)]));
+      [key, sensitive.test(key) ? '[REDACTED]' : redact(item, secrets)]));
   }
   return value;
 }
 
 const messages = {
-  AUTH_EXPIRED: 'Metabase 登录已失效，请更新本机 METABASE_SESSION 后重新启用服务。',
+  AUTH_EXPIRED: 'Metabase 会话无效，请检查本机账号密码配置，或更新 METABASE_SESSION。',
+  LOGIN_FAILED: 'Metabase 登录失败，请检查本机账号密码、登录方式及登录限流状态。',
   ACCESS_DENIED: '当前 Metabase 账号没有该数据库的查询权限。',
   UPSTREAM_ERROR: 'Metabase 服务请求失败，请检查服务状态。',
   QUERY_FAILED: '查询执行失败，请检查表名、字段、SQL 语法和数据库权限。',
@@ -121,6 +125,7 @@ async function responseJson(response) {
 export class MetabaseClient {
   constructor(config, { fetch: request = globalThis.fetch, timeoutMs = 15_000, now = Date.now } = {}) {
     this.config = config;
+    this.session = config.session;
     this.request = request;
     this.timeoutMs = timeoutMs;
     this.controller = null;
@@ -128,6 +133,27 @@ export class MetabaseClient {
     this.databaseCache = null;
   }
   close() { this.controller?.abort(); }
+
+  redact(value) { return redact(value, [this.config.password, this.config.session, this.session]); }
+
+  // Keep refreshed sessions in this service process, never in source code or the portable deployment.
+  async login(signal) {
+    this.databaseCache = null;
+    process.stderr.write('[info] service=metabase action=login status=started\n');
+    const response = await this.request(new URL('session', this.config.url), { method: 'POST', signal, redirect: 'error',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: this.config.username, password: this.config.password }) });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw Object.assign(new Error(), { code: response.status < 500 ? 'LOGIN_FAILED' : 'UPSTREAM_ERROR' });
+    }
+    const body = await responseJson(response);
+    if (typeof body?.id !== 'string' || !body.id.trim()) {
+      throw Object.assign(new Error(), { code: 'INVALID_RESPONSE' });
+    }
+    this.session = body.id;
+    process.stderr.write('[info] service=metabase action=login status=ok\n');
+  }
 
   // Only cache public catalog metadata in memory, never connection details or query results.
   async catalog(signal, refresh = false) {
@@ -139,15 +165,25 @@ export class MetabaseClient {
       || typeof entry.name !== 'string' || !entry.name.trim())) {
       throw Object.assign(new Error(), { code: 'INVALID_RESPONSE' });
     }
-    const databases = entries.map(({ id, name, engine }) => ({ id, name: redact(name, this.config.session),
-      ...(typeof engine === 'string' ? { engine: redact(engine, this.config.session) } : {}) }));
+    const databases = entries.map(({ id, name, engine }) => ({ id, name: this.redact(name),
+      ...(typeof engine === 'string' ? { engine: this.redact(engine) } : {}) }));
     this.databaseCache = { databases, expires: this.now() + 300_000 };
     return { databases, cached: false };
   }
 
   async requestJson(url, options) {
-    const response = await this.request(url, { ...options, redirect: 'error',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Metabase-Session': this.config.session } });
+    const authenticated = Boolean(this.session);
+    if (!authenticated) { await this.login(options.signal); }
+    const send = () => this.request(url, { ...options, redirect: 'error',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Metabase-Session': this.session } });
+    let response = await send();
+    // Only an explicit authentication rejection is replayed, once; network/query failures are never retried.
+    if (response.status === 401 && authenticated && this.config.username && this.config.password) {
+      await response.body?.cancel();
+      this.session = '';
+      await this.login(options.signal);
+      response = await send();
+    }
     if (!response.ok) {
       await response.body?.cancel();
       if ([401, 403].includes(response.status)) { this.databaseCache = null; }
@@ -167,7 +203,7 @@ export class MetabaseClient {
     return this.perform({}, async (_metadata, signal) => ({ status: 'ok', ...await this.catalog(signal, input.refresh) }));
   }
 
-  // A query and its catalog lookup share one deadline; failed requests are never retried implicitly.
+  // Login, catalog lookup and the query share one deadline, including one authentication recovery per request.
   async perform(metadata, action) {
     const started = Date.now();
     metadata.request_id = randomUUID();
@@ -176,7 +212,7 @@ export class MetabaseClient {
     if (this.controller) { return failure('BUSY'); }
     const controller = new AbortController();
     this.controller = controller;
-    // Stay below the host's 18-second tool deadline; never retry a production query implicitly.
+    // Stay below the host's 18-second tool deadline, even when session renewal is needed.
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       return { ...await action(metadata, controller.signal), ...metadata, elapsed_ms: Date.now() - started };
@@ -213,10 +249,10 @@ export class MetabaseClient {
         || cols.some(column => typeof column?.name !== 'string')
         || rows.some(row => !Array.isArray(row) || row.length !== cols.length)) { return failure('INVALID_RESPONSE'); }
       const result = { ...metadata, status: 'ok',
-        columns: cols.map(column => ({ name: redact(column.name, this.config.session),
-          type: typeof column.base_type === 'string' ? redact(column.base_type, this.config.session) : undefined })),
+        columns: cols.map(column => ({ name: this.redact(column.name),
+          type: typeof column.base_type === 'string' ? this.redact(column.base_type) : undefined })),
         rows: rows.slice(0, limit).map(row => row.map((value, index) =>
-          sensitive.test(cols[index].name) ? '[REDACTED]' : redact(value, this.config.session))),
+          sensitive.test(cols[index].name) ? '[REDACTED]' : this.redact(value))),
         row_count: Math.min(rows.length, limit), truncated: Boolean(truncated) || rows.length >= limit };
       return Buffer.byteLength(JSON.stringify(result)) > 256 * 1024 ? failure('RESULT_TOO_LARGE') : result;
     });
@@ -259,7 +295,7 @@ export function serve(client, input = process.stdin, output = process.stdout) {
     if (request.method === 'initialize') {
       reply({ protocolVersion: ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'].includes(request.params?.protocolVersion)
         ? request.params.protocolVersion : '2024-11-05', capabilities: { tools: {} },
-      serverInfo: { name: 'metabase-readonly', version: '1.1.0' } });
+      serverInfo: { name: 'metabase-readonly', version: '1.2.0' } });
       return;
     }
     if (request.method === 'ping') { reply({}); return; }
@@ -302,7 +338,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     serve(client);
     for (const signal of ['SIGTERM', 'SIGINT']) { process.on(signal, () => { client.close(); process.exit(0); }); }
   } catch {
-    process.stderr.write('[error] service=metabase code=CONFIG_INVALID 配置地址和METABASE_SESSION后启动\n');
+    process.stderr.write('[error] service=metabase code=CONFIG_INVALID 配置HTTPS地址及账号密码，或METABASE_SESSION后启动\n');
     process.exitCode = 1;
   }
 }

@@ -1,0 +1,5 @@
+{
+  "database": "treasury",
+  "limit": 100,
+  "sql": "SELECT CAST(e.id AS CHAR) AS event_record_id,\nCAST(e.order_id AS CHAR) AS application_id,\ne.country_code,\nDATE_FORMAT(e.create_time, '%Y-%m-%d %H:%i:%s') AS create_time,\nCOALESCE(c.channel_name, e.channel_code) AS channel_name,\ne.proxy_id AS channel_id,\ne.channel_code\nFROM financial.payment_channel_trade_event_record e\nLEFT JOIN financial.payment_channel c ON c.channel_code = e.channel_code\nWHERE e.business_type = 'PAYOUT'\nAND e.event_type = 'CALL'\nAND e.event_result = 'SUCCESS'\nAND e.callback_received = 0\nAND e.del_flag = 0\nAND e.create_time >= NOW() - INTERVAL 1 MONTH\nAND e.create_time < NOW() - INTERVAL 6 HOUR\nAND e.id > 0\nORDER BY e.id\nLIMIT 100"
+}

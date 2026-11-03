@@ -1,0 +1,64 @@
+.git-repository { overflow-wrap: anywhere; }
+.git-branches { min-width: 0; }
+.git-branch-children { margin-left: 16px; }
+.git-branches svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.git-branch-group > summary,
+.git-branches .git-branch-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--desk-control-text);
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.git-branch-group > summary { list-style: none; }
+.git-branch-group > summary::-webkit-details-marker { display: none; }
+.git-branch-group[open] > summary > .git-branch-arrow { transform: rotate(90deg); }
+.git-branches .git-branch-choice { padding-left: 32px; }
+.git-branch-group > summary > span,
+.git-branch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-branch-choice > small { margin-left: auto; flex-shrink: 0; }
+.git-branch-group > summary:hover,
+.git-branches .git-branch-choice:is(:hover, [aria-pressed=true]) { background: var(--desk-hover); }
+.git-branches .git-branch-choice[aria-pressed=true] { color: var(--accent); }
+.git-branch-group > summary:focus-visible,
+.git-branches .git-branch-choice:focus-visible { outline: 1px solid var(--desk-control-focus); outline-offset: -1px; }
+
+.git-branches-dialog { width: 330px; }
+.git-branches-dialog > form {
+  display: flex;
+  flex-direction: column;
+  max-height: min(620px, calc(100vh - 18px));
+}
+.git-branches-dialog > form > .dialog-heading { flex-shrink: 0; gap: 8px; }
+.git-branches-dialog .dialog-heading h2 { margin-right: auto; }
+.git-branches-dialog > form > .dialog-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+.git-branches-dialog > form > .dialog-body > .git-repository { flex-shrink: 0; margin: 0 0 8px; }
+.git-branches-dialog .git-branches { min-height: 0; overflow: auto; }
+.git-branch-action { width: 260px; }
+.git-branch-action .dialog-body > p { margin: 0 0 8px; }
+.git-branch-action .dialog-body > p:last-child { margin-bottom: 0; }

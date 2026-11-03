@@ -141,6 +141,7 @@ test('真实宿主：安装插件包后在界面里跑通「邮件抓取 → 日
   await credential(frame, port);
   await frame.locator('.node', { hasText: 'Agent 排查' }).click();
   await frame.locator('#properties #delete-node').click();
+  await frame.getByRole('dialog', { name: '删除节点', exact: true }).getByRole('button', { name: '确认删除', exact: true }).click();
   assert.equal(await frame.locator('.node').count(), 6);
   // Reconnect the gate to the summary node so the remaining four nodes still form one path.
   await frame.locator('.node', { hasText: '存在错误才继续' }).locator('.port.out').click();
@@ -234,6 +235,7 @@ test('真实宿主：设为固定周期后不点运行也会自动触发', { tim
   await credential(frame, port);
   await frame.locator('.node', { hasText: 'Agent 排查' }).click();
   await frame.locator('#properties #delete-node').click();
+  await frame.getByRole('dialog', { name: '删除节点', exact: true }).getByRole('button', { name: '确认删除', exact: true }).click();
   await frame.locator('.node', { hasText: '存在错误才继续' }).locator('.port.out').click();
   await frame.locator('.node', { hasText: '结果汇总' }).locator('.port.in').click();
 
@@ -280,6 +282,7 @@ test('真实宿主：节点按分类分组，输出节点落地，旧工作流�
   assert.doesNotMatch(await frame.locator('#notice').textContent(), /缺少开始节点|缺少终止节点/);
   await frame.locator('.node', { hasText: 'Agent 排查' }).click();
   await frame.locator('#properties #delete-node').click();
+  await frame.getByRole('dialog', { name: '删除节点', exact: true }).getByRole('button', { name: '确认删除', exact: true }).click();
   await frame.locator('.node', { hasText: '存在错误才继续' }).locator('.port.out').click();
   await frame.locator('.node', { hasText: '结果汇总' }).locator('.port.in').click();
 
@@ -347,8 +350,10 @@ test('真实宿主：旧工作流提示补齐开始与终止节点', { timeout: 
   // 删掉开始与终止节点，模拟 0.1.2 之前保存的旧工作流。
   await frame.locator('.node', { hasText: '开始' }).click();
   await frame.locator('#properties #delete-node').click();
+  await frame.getByRole('dialog', { name: '删除节点', exact: true }).getByRole('button', { name: '确认删除', exact: true }).click();
   await frame.locator('.node', { hasText: '终止' }).click();
   await frame.locator('#properties #delete-node').click();
+  await frame.getByRole('dialog', { name: '删除节点', exact: true }).getByRole('button', { name: '确认删除', exact: true }).click();
   assert.match(await frame.locator('#notice').textContent(), /缺少开始节点[\s\S]*缺少终止节点/);
   await frame.locator('#save').click();
   await frame.locator('#status').filter({ hasText: '已保存' }).waitFor();
@@ -356,6 +361,7 @@ test('真实宿主：旧工作流提示补齐开始与终止节点', { timeout: 
   // 旧工作流仍能按“无上游的节点”推断入口并跑通。
   await frame.locator('.node', { hasText: 'Agent 排查' }).click();
   await frame.locator('#properties #delete-node').click();
+  await frame.getByRole('dialog', { name: '删除节点', exact: true }).getByRole('button', { name: '确认删除', exact: true }).click();
   await frame.locator('.node', { hasText: '存在错误才继续' }).locator('.port.out').click();
   await frame.locator('.node', { hasText: '结果汇总' }).locator('.port.in').click();
   await frame.locator('#save').click();

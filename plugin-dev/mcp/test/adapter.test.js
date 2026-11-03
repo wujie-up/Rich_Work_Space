@@ -65,3 +65,19 @@ test('Claude discovers the same live services using native HTTP MCP configuratio
   context.services.invoke = async () => ({ version: 1, mcpConfig: { mcpServers: { unsafe: { command: 'shell' } } } });
   await assert.rejects(resolveLaunchConfig(context, 'claude'), { code: 'LAUNCH_CONFIG_INVALID' });
 });
+
+test('resolving one native server ignores unrelated unavailable providers', async t => {
+  const { createHash } = await import('node:crypto');
+  const storage = await temporaryStore(t);
+  const calls = [];
+  const config = new LaunchConfig({ storage, pluginId: 'mcp-services', services: {
+    discover: async () => [{ pluginId: 'offline-provider' }],
+    invoke: async provider => { calls.push(provider.pluginId); throw Error('offline'); }
+  } }, async () => ({ version: 1, services: [{ id: 'db', name: 'database', state: 'running',
+    url: 'http://127.0.0.1:123/mcp', headers: { Authorization: 'Bearer current' } }] }));
+  await config.save([{ pluginId: 'offline-provider', serviceId: 'logs' }]);
+  const serverName = 'desk_' + createHash('sha256').update('mcp-services:db').digest('hex').slice(0, 16);
+  const result = await config.launch({ clientId: 'claude', serverName });
+  assert.deepEqual(Object.keys(result.mcpConfig.mcpServers), [serverName]);
+  assert.deepEqual(calls, []);
+});

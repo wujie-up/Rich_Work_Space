@@ -15,3 +15,24 @@ test('viewer has no transport or upstream and gracefully handles an old AI plugi
   assert.deepEqual(lifecycle.snapshot(), []);
   await lifecycle.stop();
 });
+
+test('heartbeat failures report Agent connectivity and preserve the actual cause', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const methods = new Map();
+  let emitted;
+  const received = new Promise(resolve => { emitted = resolve; });
+  await activate({ services: { discover: async () => [{ pluginId: 'agent' }], invoke: async (_provider, input) => {
+    if (input.action === 'configure' && ++attempts > 1) { throw Error('目标对话不属于指定窗口'); }
+    return { enabled: true };
+  } }, emit: (_channel, event) => emitted(event),
+  methods: { register: (name, handler) => methods.set(name, handler) },
+  views: { register() {} }, lifecycle: { register() {} } });
+  let attempts = 0;
+  t.after(deactivate);
+  await methods.get('capture.configure')({ enabled: true,
+    target: { pluginId: 'agent', instanceId: 'instance', windowId: 'window', conversationId: 'session' } });
+  t.mock.timers.tick(5000);
+  const event = await received;
+  assert.equal(event.type, 'capture.unavailable');
+  assert.equal(event.message, '目标对话不属于指定窗口');
+});

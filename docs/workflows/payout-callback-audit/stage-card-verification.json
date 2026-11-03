@@ -1,0 +1,30 @@
+{
+  "checkedAt": "2026-11-03T05:43:03.529Z",
+  "pluginId": "work-flow",
+  "version": "0.5.56",
+  "integrity": "passed",
+  "fileCount": 7948,
+  "credentialsIncluded": false,
+  "archive": "plugin-dev/dist/work-flow-0.5.56.plg",
+  "sha256": "25c92b4d046d9003adc39a05631962bc9999b435d8db2d5696a8a43ad10564f3",
+  "tests": {
+    "passed": 55,
+    "failed": 0,
+    "latestCardWidthRegressionPassed": 11
+  },
+  "review": "no confirmed issues",
+  "liveCardDeliveryTested": false,
+  "actualBusinessMessagesSent": 0,
+  "workflowNodes": 8,
+  "displayColumns": [
+    "老系统申请单ID",
+    "创建时间",
+    "merchant_no"
+  ],
+  "rendering": "Feishu JSON 2.0 native table",
+  "notes": [
+    "No production database query performed in this revision",
+    "Existing installed plugin and user workflow unchanged",
+    "Import resets trigger to manual; enable daily 10:00 explicitly after upgrade"
+  ]
+}

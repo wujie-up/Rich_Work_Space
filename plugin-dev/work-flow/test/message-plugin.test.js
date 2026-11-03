@@ -14,6 +14,7 @@ test('消息 RPC 脱敏、引用检查、生命周期和旧数据兼容', async 
   t.after(() => deactivate());
   const call = (name, input) => methods.get(name).handler(input);
   assert.ok((await call('workflows.list')).some(item => item.id === 'old'));
+  const initial = await call('workflows.list');
   assert.deepEqual(await call('credentials.list'), []);
   const c = await call('messages.connections.save', { name: '飞书', channel: 'feishu', appId: 'id', appSecret: 'hidden-key' });
   assert.equal(JSON.stringify(await call('messages.connections.list')).includes('hidden-key'), false);
@@ -21,7 +22,7 @@ test('消息 RPC 脱敏、引用检查、生命周期和旧数据兼容', async 
     await assert.rejects(call('workflows.save', { name: '错误连接', trigger: { mode: 'message', enabled: true },
       nodes: [{ id: 'source', type: 'message.wechat', params: { connectionId } }], edges: [] }), { code: 'INVALID_WORKFLOW' });
   }
-  assert.equal((await call('workflows.list')).length, 1, '坏连接配置不能落盘');
+  assert.deepEqual(await call('workflows.list'), initial, '坏连接配置不能落盘，也不能影响预置模板');
   const workflow = await call('workflows.save', { name: '飞书接收', nodes: [{ id: 'source', type: 'message.feishu', params: { connectionId: c.id } }], edges: [] });
   await assert.rejects(call('messages.connections.remove', c.id), { code: 'CONNECTION_IN_USE' });
   await assert.rejects(call('runs.start', workflow.id), { code: 'MESSAGE_EVENT_REQUIRED' });
@@ -47,8 +48,9 @@ test('旧的坏连接订阅不会阻断插件激活，错误可通过状态修�
   t.after(() => deactivate());
   assert.equal((await methods.get('messages.status')())[0].workflowId, 'broken');
   assert.equal((await methods.get('messages.status')())[0].state, 'error');
-  assert.deepEqual(await methods.get('triggers.next')(), [{ workflowId: 'broken', mode: 'message', enabled: true, nextAt: null }]);
-  const broken = (await methods.get('workflows.list')())[0];
+  assert.deepEqual((await methods.get('triggers.next')()).filter(item => item.workflowId === 'broken'),
+    [{ workflowId: 'broken', mode: 'message', enabled: true, nextAt: null }]);
+  const broken = (await methods.get('workflows.list')()).find(item => item.id === 'broken');
   await methods.get('workflows.save')({ ...broken, trigger: { mode: 'message', enabled: false } });
   assert.deepEqual(await methods.get('messages.status')(), []);
 });

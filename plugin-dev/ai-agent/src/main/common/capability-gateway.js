@@ -1,3 +1,4 @@
+import { serviceAllowed, serviceCatalog } from './mcp-selection.js';
 import { createServer } from 'node:http';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -11,7 +12,13 @@ export class CapabilityGateway {
   }
 
   async start() {
-    await this.refreshCatalog();
+    const catalog = await this.capabilities.discover();
+    const services = serviceCatalog(catalog);
+    if (this.selection?.mode === 'selected' && this.selection.services.some(selected =>
+      !services.some(service => service.pluginId === selected.pluginId && service.serviceId === selected.serviceId && service.state === 'ready'))) {
+      throw Error('所选 MCP 服务不可用，请先启动服务或重新选择');
+    }
+    await this.refreshCatalog(catalog);
     this.server = createServer((request, response) => this.serve(request, response));
     await new Promise((resolve, reject) => {
       this.server.once('error', reject);
@@ -77,18 +84,20 @@ export class CapabilityGateway {
     throw Error(`不支持的 MCP 方法：${method}`);
   }
 
-  async refreshCatalog() {
-    const catalog = await this.capabilities.discover();
+  async refreshCatalog(discovered) {
+    const catalog = discovered || await this.capabilities.discover();
     const changed = this.catalogRevision !== undefined && this.catalogRevision !== catalog.catalogRevision;
     this.catalogRevision = catalog.catalogRevision;
     this.handles.clear();
     this.tools = catalog.providers.filter(({ state, handle, descriptor }) => {
-      if (state !== 'ready' || /^agent\.(menu|task|mcp)\./.test(descriptor.id)) { return false; }
+      if (!serviceAllowed({ handle, descriptor }, this.selection) || state !== 'ready' || /^agent\.(menu|task|mcp|session|bridge)\./.test(descriptor.id)) { return false; }
       if (this.task?.mcpDebug) {
         return descriptor.source?.debug === true && descriptor.source.serviceId === this.task.mcpDebug.serviceId
           && handle.pluginId === this.task.mcpDebug.pluginId;
       }
-      return !this.task && descriptor.source?.debug !== true;
+      const planAllows = this.task?.background || this.task?.kind !== 'plan' || descriptor.effects.length > 0
+        && descriptor.effects.every(effect => /^(filesystem|network|workspace|document)\.read$/.test(effect));
+      return (!this.task || this.task.background) && planAllows && descriptor.source?.debug !== true;
     }).map(({ handle, descriptor }) => {
       const name = `cap_${createHash('sha256').update(JSON.stringify(handle)).digest('hex').slice(0, 24)}`;
       // Match the host's read effects so tool hints describe the same approval boundary.
@@ -108,7 +117,7 @@ export class CapabilityGateway {
         throw Error('工具句柄已失效，请重新发现能力');
       }
       // Host binds caller identity and trace lineage; model-supplied identity/options are never forwarded.
-      const task = await this.capabilities.invoke(handle, input, {});
+      const task = await this.capabilities.invoke(handle, input, this.task?.background ? { authorizationId: this.task.background.authorizationId } : {});
       this.active.add(task.invocationId);
       this.onInvocation({ conversationId: this.conversationId, ...task });
       try {
@@ -116,7 +125,13 @@ export class CapabilityGateway {
           const snapshot = await this.capabilities.getInvocation(task.invocationId);
           if (['succeeded', 'failed', 'cancelled', 'interrupted'].includes(snapshot.state)) {
             this.onInvocation({ conversationId: this.conversationId, ...snapshot });
-            return { content: [{ type: 'text', text: JSON.stringify(snapshot.state === 'succeeded' ? snapshot.result : snapshot.error) }],
+            // Preserve MCP media blocks: a screenshot serialized as JSON is invisible to the native model.
+            if (snapshot.state === 'succeeded' && Array.isArray(snapshot.result?.content)) {
+              return snapshot.result;
+            }
+            // Declined approval can finish without an error payload; MCP text blocks still require a string.
+            return { content: [{ type: 'text', text: JSON.stringify((snapshot.state === 'succeeded' ? snapshot.result : snapshot.error)
+              ?? { state: snapshot.state }) }],
               isError: snapshot.state !== 'succeeded' };
           }
           await delay(100);

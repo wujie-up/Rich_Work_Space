@@ -1,4 +1,4 @@
-// Run explicitly with the latest packaged DeckPg and isolated test data.
+// Run explicitly with the latest packaged DeskPG and isolated test data.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
@@ -20,6 +20,126 @@ async function install(app, page, id = 'mcp-services', source = archive) {
   await page.evaluate(() => workDesk.plugins.install());
 }
 const invoke = (page, method, ...args) => page.evaluate(({ method, args }) => workDesk.plugins.invoke('mcp-services', method, args), { method, args });
+
+test('MCP opens with only service rows and expands configuration and source on demand', { timeout: 60000 }, async t => {
+  const { app, page } = await launch(t, { openPlugin: false, disabledPlugins: ['resource-monitor'] });
+  await install(app, page, 'mcp-services', resolve('plugin-dev/dist/mcp-services-0.4.13.plg'));
+  const source = await readFile(new URL('./script-fixture.mjs', import.meta.url), 'utf8');
+  await invoke(page, 'mcp.save', { id: 'configured', name: '脚本服务', transport: 'script', language: 'javascript',
+    entry: 'server.mjs', interpreter: process.execPath, source, fields: [], env: { API_KEY: 'preserved-local-key' } });
+  await invoke(page, 'mcp.save', { id: 'remote', name: '远程服务', transport: 'http', url: 'https://example.test/mcp' });
+  await invoke(page, 'mcp.start', 'configured');
+  const before = await invoke(page, 'mcp.list');
+  await page.locator('.shelf-app[data-plugin="mcp-services"]').click();
+  const frame = page.frameLocator('iframe[title="MCP 服务"]');
+  await frame.getByRole('button', { name: '配置 脚本服务', exact: true }).waitFor();
+  assert.equal(await frame.locator('#details').isHidden(), true);
+  assert.equal(await frame.locator('#config').count(), 0);
+  assert.equal(await frame.locator('#refresh').count(), 0);
+  assert.equal(await frame.locator('#back').isHidden(), true);
+  assert.equal(await frame.locator('#status').textContent(), '');
+  assert.equal(await frame.locator('#config').count(), 0);
+  await frame.getByRole('button', { name: '配置 脚本服务', exact: true }).click();
+  await frame.locator('#config').waitFor();
+  assert.equal(await frame.locator('#services').isHidden(), true);
+  assert.equal(await frame.locator('#back').isVisible(), true);
+  assert.equal(await frame.locator('[name="source"]').isHidden(), true);
+  await frame.locator('#service-code > summary').click();
+  assert.equal(await frame.locator('[name="source"]').inputValue(), source);
+  await frame.locator('[name="source"]').fill(`${source}\n// preserved edit`);
+  await frame.locator('#service-code > summary').click();
+  assert.equal(await frame.locator('[name="source"]').isHidden(), true);
+  await frame.locator('#service-code > summary').click();
+  assert.equal(await frame.locator('[name="source"]').inputValue(), `${source}\n// preserved edit`);
+  await mkdir('.test-results/mcp-settings', { recursive: true });
+  await page.screenshot({ path: '.test-results/mcp-settings/config-on-demand.png' });
+  if (await page.locator('html').getAttribute('data-theme') !== 'dark') {
+    await toggleTheme(page);
+  }
+  await until(() => frame.locator('html').getAttribute('data-theme').then(theme => theme === 'dark'));
+  assert.equal(await frame.locator('[name="name"]').evaluate(node => getComputedStyle(node).color), 'rgb(198, 200, 206)');
+  assert.equal(await frame.locator('#service-code > summary').evaluate(node => getComputedStyle(node).color), 'rgb(149, 153, 162)');
+  await page.screenshot({ path: '.test-results/mcp-settings/dark-soft-text.png' });
+  await frame.getByRole('button', { name: '返回服务列表', exact: true }).click();
+  assert.equal(await frame.locator('#details').isHidden(), true);
+  assert.equal(await frame.locator('#services').isVisible(), true);
+  await frame.getByRole('button', { name: '配置 脚本服务', exact: true }).click();
+  assert.equal(await frame.locator('[name="source"]').inputValue(), `${source}\n// preserved edit`);
+  await frame.getByRole('button', { name: '返回服务列表', exact: true }).click();
+  await frame.getByRole('button', { name: '配置 远程服务', exact: true }).click();
+  await frame.locator('[name="url"]').waitFor();
+  assert.equal(await frame.locator('[name="url"]').inputValue(), 'https://example.test/mcp');
+  await frame.getByRole('button', { name: '返回服务列表', exact: true }).click();
+  assert.equal(await frame.locator('#details').isHidden(), true);
+  assert.deepEqual(await invoke(page, 'mcp.list'), before);
+  assert.equal(await invoke(page, 'mcp.source', 'configured'), source);
+  assert.match((await invoke(page, 'mcp.call', 'configured', 'javascript_query', { text: 'STILL_RUNNING' })).content[0].text,
+    /STILL_RUNNING/);
+  await page.screenshot({ path: '.test-results/mcp-settings/list-on-entry.png' });
+  await frame.locator('#new').click();
+  await frame.locator('#config').waitFor();
+  assert.equal(await frame.locator('[name="name"]').inputValue(), '');
+  assert.equal(await frame.locator('[name="source"]').isHidden(), true);
+});
+
+test('service logs open at latest entries and clear only the selected service', { timeout: 60000 }, async t => {
+  const { app, page, data } = await launch(t, { openPlugin: false, disabledPlugins: ['resource-monitor'] });
+  const directory = join(data, 'plugin-data/mcp-services');
+  await mkdir(join(directory, 'logs'), { recursive: true });
+  const configs = ['selected', 'other'].map(id => ({ id, name: id, transport: 'http', url: 'https://example.test/mcp' }));
+  await writeFile(join(directory, 'services.json'), JSON.stringify(configs));
+  const entries = Array.from({ length: 100 }, (_, n) => `2026-10-27T00:00:00Z info entry-${n}`).join('\n');
+  await writeFile(join(directory, 'logs/selected.json'), JSON.stringify(entries));
+  await writeFile(join(directory, 'logs/other.json'), JSON.stringify('other-retained'));
+  await install(app, page, 'mcp-services', resolve('plugin-dev/dist/mcp-services-0.4.13.plg'));
+  await page.locator('.shelf-app[data-plugin="mcp-services"]').click();
+  const frame = page.frameLocator('iframe[title="MCP 服务"]');
+  await frame.locator('#services').getByRole('button', { name: /selected/ }).click();
+  await frame.locator('#result').getByText(/entry-99/).waitFor();
+  const position = () => frame.locator('#result').evaluate(element => ({
+    bottom: element.scrollHeight - element.scrollTop - element.clientHeight, overflow: element.scrollHeight > element.clientHeight
+  }));
+  assert.equal(await frame.locator('#service-logs').getAttribute('open'), '');
+  assert.equal((await position()).overflow, true);
+  assert.ok((await position()).bottom < 2);
+  await frame.locator('#result').evaluate(element => { element.scrollTop = 0; });
+  await frame.getByRole('button', { name: '刷新日志', exact: true }).click();
+  await until(() => frame.getByRole('button', { name: '刷新日志', exact: true }).isEnabled());
+  assert.equal(await frame.locator('#status').textContent(), '');
+  assert.ok((await position()).bottom < 2);
+  await frame.getByRole('button', { name: '清理当前服务日志' }).click();
+  await frame.locator('#result').getByText('暂无日志', { exact: true }).waitFor();
+  assert.equal(await invoke(page, 'mcp.logs', 'selected'), '');
+  assert.equal(await invoke(page, 'mcp.logs', 'other'), 'other-retained');
+  assert.deepEqual(JSON.parse(await readFile(join(directory, 'logs/selected.json'), 'utf8')), '');
+  assert.deepEqual(await invoke(page, 'mcp.list').then(items => items.map(({ id, url }) => ({ id, url }))),
+    configs.map(({ id, url }) => ({ id, url })));
+});
+
+test('script environment editor injects local credentials without putting them in source', { timeout: 60000 }, async t => {
+  const { app, page } = await launch(t, { openPlugin: false });
+  await install(app, page, 'mcp-services', resolve('plugin-dev/dist/mcp-services-0.4.9.plg'));
+  const source = await readFile(new URL('./script-fixture.mjs', import.meta.url), 'utf8');
+  await invoke(page, 'mcp.save', { id: 'environment-editor', name: '环境变量验证', transport: 'script', language: 'javascript',
+    entry: 'server.mjs', interpreter: process.execPath, source, fields: [], env: { API_KEY: 'retained-secret' } });
+  await openWorkspace(page, 'mcp-services');
+  const frame = page.frameLocator('iframe[title="MCP 服务"]');
+  await frame.locator('[name="source"]').waitFor();
+  await frame.getByText('环境变量', { exact: true }).click();
+  const env = { API_KEY: 'retained-secret', ENDPOINT: 'https://configured.example.test',
+    METABASE_USERNAME: 'test-account', METABASE_PASSWORD: 'test-password' };
+  await frame.locator('[name="script-env"]').fill(JSON.stringify(env));
+  await frame.locator('#save').click();
+  await frame.locator('#status').getByText('已完成', { exact: true }).waitFor();
+  const [saved] = await invoke(page, 'mcp.list');
+  assert.deepEqual(saved.env, env);
+  assert.equal(await invoke(page, 'mcp.source', saved.id), source);
+  await frame.locator('#start').click();
+  await frame.locator('#services').getByText(/running/).waitFor();
+  const response = await invoke(page, 'mcp.call', saved.id, 'javascript_query', { text: 'CONFIG' });
+  assert.match(response.content[0].text, /CONFIG:https:\/\/configured.example.test/);
+  assert.ok(!(await invoke(page, 'mcp.logs', saved.id)).includes('retained-secret'));
+});
 async function until(predicate) {
   for (let n = 0; n < 150; n++) {
     const result = await predicate();
@@ -29,7 +149,7 @@ async function until(predicate) {
   throw Error('Expected MCP state was not observed');
 }
 
-test('latest DeckPg: editable code/config, lazy tools, AI failure cleanup, themes and upgrade', { timeout: 120000 }, async t => {
+test('latest DeskPG: editable code/config, lazy tools, AI failure cleanup, themes and upgrade', { timeout: 120000 }, async t => {
   const { app, page, data } = await launch(t, { openPlugin: false });
   await install(app, page);
   await install(app, page, 'ai-agent-sessions', resolve('plugin-dev/dist/ai-agent-sessions-0.5.5.plg'));

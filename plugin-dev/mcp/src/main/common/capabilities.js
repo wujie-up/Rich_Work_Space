@@ -25,7 +25,7 @@ export class McpCapabilities {
         const capabilityId = `mcp.${createHash('sha256').update(`${id}:${action}`).digest('hex').slice(0, 24)}`;
         await this.context.capabilities.register({ id: capabilityId, version: 1, title: `${config.name} · ${title}`,
           description, inputSchema, outputSchema: { type: 'object' }, effects, confirmation: 'policy',
-          execution: { timeoutMs: 20000, cancellable: true, retry: 'never' },
+          execution: { timeoutMs: action === 'call' ? 600000 : 20000, cancellable: true, retry: 'never' },
           source: { serviceId: id, ...(config.debug ? { debug: true } : {}) } }, handler);
         entries.push(capabilityId);
       }

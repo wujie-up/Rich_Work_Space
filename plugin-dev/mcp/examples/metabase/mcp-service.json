@@ -8,10 +8,18 @@
       "label": "Metabase HTTPS 地址"
     },
     {
+      "name": "METABASE_USERNAME",
+      "label": "Metabase 登录账号"
+    },
+    {
+      "name": "METABASE_PASSWORD",
+      "label": "Metabase 登录密码",
+      "secret": true
+    },
+    {
       "name": "METABASE_SESSION",
       "label": "Metabase Session",
-      "secret": true,
-      "required": true
+      "secret": true
     }
   ]
 }

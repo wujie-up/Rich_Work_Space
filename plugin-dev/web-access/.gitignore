@@ -1,0 +1,4 @@
+assistants/.build/
+assistants/core/.build/
+**/xcuserdata/
+*.xcuserstate

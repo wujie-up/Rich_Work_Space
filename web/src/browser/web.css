@@ -1,0 +1,82 @@
+.web-login { display: grid; gap: 16px; width: min(360px, calc(100vw - 48px)); margin: max(24px, 16dvh) auto;
+  padding-bottom: max(24px, env(safe-area-inset-bottom)); color: var(--desk-control-text); }
+.web-login h1 { font-size: 26px; font-style: italic; font-weight: 500; }
+:root body .web-login button.icon-button { justify-self: end; width: 48px; height: 48px; }
+.web-login svg { width: 24px; height: 24px; }
+.web-login [role=alert] { color: #bc4848; }
+.web-stopped { margin: 20vh auto; padding: 24px; text-align: center; }
+/* Keep initialization visible until both the shared desktop and mobile layout are ready. */
+html[data-web-opening] .app, html[data-web-opening] .titlebar { visibility: hidden; }
+.web-opening { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  flex-direction: column; gap: 20px; padding: 24px; color: var(--desk-control-text); }
+.web-opening[role=status]::before { content: ''; width: 32px; height: 32px; border: 2px solid currentColor;
+  border-right-color: transparent; border-radius: 50%; animation: web-opening-spin 1s linear infinite; opacity: .65; }
+@keyframes web-opening-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .web-opening::before { animation: none; } }
+html[data-platform=web] .titlebar { -webkit-app-region: none; }
+
+/* Layout only: control and popup appearance stays in the bundled shared controls. */
+html[data-mobile] .app { height: 100dvh; padding: env(safe-area-inset-top) env(safe-area-inset-right)
+  calc(64px + env(safe-area-inset-bottom)) env(safe-area-inset-left); }
+html[data-mobile] .desktop-stage #content { margin: 0; --tabs-height: 0px; }
+html[data-mobile] .titlebar, html[data-mobile] .shelf-toggle,
+html[data-mobile] .shelf-icon-resize, html[data-mobile] .workspace-label { display: none; }
+html[data-mobile] .application-window { border-top-left-radius: 0; }
+html[data-mobile] .desktop-surface { padding: 24px 20px; }
+html[data-mobile] .web-mobile-heading { margin: 0 0 20px; }
+html[data-mobile] h2.web-mobile-heading { margin-top: 24px; }
+html[data-mobile] .desktop-surface:not(:has(.desktop-file)) .web-mobile-files-heading { display: none; }
+html[data-mobile] .plugin-shelf, html[data-mobile] .plugin-shelf[hidden] {
+  position: relative; inset: auto; z-index: auto; width: 100%; display: grid !important; padding: 0;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)) !important; grid-auto-rows: auto !important;
+  gap: 16px 12px !important; overflow: visible; background: none;
+}
+html[data-mobile] .shelf-app, html[data-mobile] .shelf-app[hidden] {
+  display: flex !important; grid-area: auto !important; min-height: 88px; padding: 8px 0; gap: 10px; touch-action: pan-y;
+}
+html[data-mobile] .shelf-icon { width: 44px; height: 44px; }
+html[data-mobile] .shelf-name, html[data-mobile] .plugin-shelf[data-names=hidden] .shelf-name {
+  display: block; white-space: normal; overflow-wrap: anywhere; font-size: 13px;
+}
+html[data-mobile] .desktop-files {
+  height: auto; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)) !important;
+  grid-auto-rows: auto !important; gap: 16px 12px !important;
+}
+html[data-mobile] .desktop-file, html[data-mobile] .desktop-file[hidden] {
+  display: flex !important; grid-area: auto !important; min-height: 88px; touch-action: pan-y;
+}
+html[data-mobile] .desktop-file svg { width: 44px; height: 44px; }
+html[data-mobile] .web-mobile-bar {
+  position: fixed; inset: auto 0 0; display: flex; align-items: center; justify-content: space-around;
+  height: calc(64px + env(safe-area-inset-bottom)); padding: 8px env(safe-area-inset-right)
+  calc(8px + env(safe-area-inset-bottom)) env(safe-area-inset-left); background: var(--chrome);
+}
+html[data-mobile] .web-mobile-bar .shelf-footer { position: static; width: auto; height: auto; background: none; }
+html[data-mobile] .web-mobile-bar button { width: 48px; height: 48px; }
+html[data-mobile] .window-tabs[popover] {
+  position: fixed; inset: auto; margin: 0; width: min(420px, calc(100vw - 32px)); height: auto;
+  max-height: calc(100dvh - 32px); overflow: auto; padding: 8px;
+}
+html[data-mobile] .window-tabs:popover-open { display: flex; flex-direction: column; }
+html[data-mobile] .window-tabs[popover]:not(:popover-open) { display: none; }
+html[data-mobile] .window-tab, html[data-mobile] .window-tab[hidden] {
+  display: flex !important; flex: none; max-width: none; width: 100%; min-height: 56px; touch-action: pan-y;
+}
+html[data-mobile] .window-tab::before, html[data-mobile] .window-tab::after { display: none; }
+html[data-mobile] .window-tab button {
+  width: 44px; height: 44px; padding: 10px; opacity: 1; pointer-events: auto; flex: 0 0 44px;
+}
+html[data-mobile] .account-menu > button, html[data-mobile] .context-menu > button { min-height: 44px; }
+html[data-mobile] #settings-panel { width: calc(100vw - 24px); height: calc(100dvh - 32px); }
+html[data-mobile] .settings-tabs { flex-wrap: wrap; gap: 4px; padding: 8px 12px; }
+html[data-mobile] .settings-tabs button { min-height: 44px; }
+html[data-mobile] .settings-body { padding: 16px; }
+html[data-mobile] #settings-panel .icon-button { min-width: 44px; min-height: 44px; }
+html[data-mobile] .plugin-grid { grid-template-columns: minmax(0, 1fr); }
+html[data-mobile] .plugin-card { min-width: 0; }
+html[data-mobile] .plugin-grid[data-layout=list] .plugin-card { grid-template-columns: 38px minmax(0, 1fr); }
+html[data-mobile] .plugin-grid[data-layout=list] .row-actions { grid-column: 2; grid-row: auto; justify-content: start; }
+html[data-mobile] .dialog-heading, html[data-mobile] .dialog-body { padding: 16px; }
+html[data-mobile] .dialog-actions .icon-button, html[data-mobile] .dialog-heading .icon-button { min-width: 44px; min-height: 44px; }
+html[data-mobile] .desktop-overlays { inset: 8px; }
+html[data-mobile] #toast { bottom: calc(80px + env(safe-area-inset-bottom)); max-width: calc(100vw - 32px); }

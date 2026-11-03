@@ -1,0 +1,336 @@
+/* Shared desktop controls are bundled into each view; plugins keep their own document and behavior. */
+:root {
+  --desk-control-bg: #181818;
+  --desk-control-text: #adb0b7;
+  --desk-control-border: #383838;
+  --desk-control-focus: #adb0b7;
+  --desk-field-bg: #27282b;
+  --desk-field-hover: #2c2e32;
+  --desk-field-focus-bg: #2c3037;
+  --desk-field-focus-border: #667180;
+  --desk-surface: #222;
+  --desk-muted: #898d96;
+  --desk-hover: #2b2b2b;
+  --desk-shadow: 0 8px 28px #0004;
+}
+:root[data-theme=light] {
+  --desk-control-bg: #f7f7f7;
+  --desk-control-text: #292733;
+  --desk-control-border: #ddd;
+  --desk-control-focus: #444;
+  --desk-field-bg: #f4f5f6;
+  --desk-field-hover: #f1f2f4;
+  --desk-field-focus-bg: #f0f3f7;
+  --desk-field-focus-border: #a5afbd;
+  --desk-surface: #fff;
+  --desk-muted: #797584;
+  --desk-hover: #eee;
+  --desk-shadow: 0 8px 28px #0002;
+}
+/* Keep native options, labels and keyboard handling; animate only the decorative arrow. */
+:root select:not([multiple]):not([size]) {
+  box-sizing: border-box;
+  appearance: none;
+  min-height: 44px;
+  min-width: 0;
+  padding: 12px 42px 12px 16px;
+  border: 1px solid var(--desk-control-border);
+  border-radius: 6px;
+  outline: none;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--desk-control-text);
+  background-color: var(--desk-control-bg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m5 9 7 7 7-7' fill='none' stroke='%23898d96' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-size: 14px 14px;
+  background-repeat: no-repeat;
+  background-position: right 15px center;
+  cursor: pointer;
+  transition: border-color 180ms ease, background-position 240ms cubic-bezier(.2,.7,.2,1);
+}
+:root select:not([multiple]):not([size]):is(:hover, :focus) {
+  background-position: right 15px top calc(50% + 3px);
+}
+:root select:not([multiple]):not([size]):focus {
+  border-color: var(--desk-control-focus);
+}
+:root select:not([multiple]):not([size]):disabled {
+  opacity: .5;
+  cursor: default;
+  background-position: right 15px center;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root select:not([multiple]):not([size]),
+  :root select:not([multiple]):not([size]):is(:hover, :focus) {
+    transition: none;
+    background-position: right 15px center;
+  }
+}
+
+/* Keep the default line height steady while allowing conversation fonts to supply matching spacing. */
+:root body input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file], [type=button], [type=submit], [type=hidden], .cm-editor input, .monaco-editor input),
+:root body textarea:not(:where(#editor), .xterm-helper-textarea, .cm-editor textarea, .monaco-editor textarea) {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 44px;
+  padding: 12px 16px;
+  border: 1px solid var(--desk-control-border);
+  border-radius: 8px;
+  background: var(--desk-field-bg);
+  color: var(--desk-control-text);
+  font-size: var(--desk-field-font-size, 13px);
+  line-height: var(--desk-field-line-height, 18px);
+  outline: none;
+  box-shadow: none;
+  transition: font-size 160ms ease, border-color 160ms ease, background-color 160ms ease;
+}
+:root body input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file], [type=button], [type=submit], [type=hidden], .cm-editor input, .monaco-editor input):hover:not(:disabled):not(:focus),
+:root body textarea:not(:where(#editor), .xterm-helper-textarea, .cm-editor textarea, .monaco-editor textarea):hover:not(:disabled):not(:focus) {
+  background-color: var(--desk-field-hover);
+}
+:root body input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file], [type=button], [type=submit], [type=hidden], .cm-editor input, .monaco-editor input):focus,
+:root body textarea:not(:where(#editor), .xterm-helper-textarea, .cm-editor textarea, .monaco-editor textarea):focus {
+  border-color: var(--desk-field-focus-border);
+  background-color: var(--desk-field-focus-bg);
+  font-size: calc(var(--desk-field-font-size, 13px) * 1.05);
+  outline: none;
+  box-shadow: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root body input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file], [type=button], [type=submit], [type=hidden], .cm-editor input, .monaco-editor input),
+  :root body textarea:not(:where(#editor), .xterm-helper-textarea, .cm-editor textarea, .monaco-editor textarea) { transition: none; }
+}
+:root body :is(input, textarea)::placeholder { color: var(--desk-muted); opacity: 1; }
+:root body :is(input, textarea):disabled { opacity: .5; cursor: default; }
+:root body :is(input, textarea)[aria-invalid=true] { border-color: #ba6464; }
+:root body input:is([type=checkbox], [type=radio]) { accent-color: #488ee8; }
+
+:root body dialog {
+  padding: 20px 24px;
+  color: var(--desk-control-text);
+  background: var(--desk-surface);
+  border: 1px solid var(--desk-control-border);
+  border-radius: 13px;
+  box-shadow: var(--desk-shadow);
+  font-size: 13px;
+  line-height: 1.6;
+}
+:root body dialog:has(.dialog-body) { padding: 0; }
+:root body dialog .dialog-heading { padding: 16px 24px; border-bottom: 1px solid var(--desk-control-border); }
+:root body dialog .dialog-body { padding: 20px 24px; }
+:root body dialog .dialog-actions { padding: 12px 24px; border-top: 1px solid var(--desk-control-border); }
+
+/* Menus retain their top-layer placement; tooltips retain their hover/focus triggers. */
+:root body :is(.account-menu, .context-menu, [role=tooltip], .settings-tooltip),
+:root body #file-input-hint,
+:root body #toast {
+  box-sizing: border-box;
+  color: var(--desk-control-text);
+  background: var(--desk-surface);
+  border: 1px solid var(--desk-control-border);
+  border-radius: 8px;
+  box-shadow: var(--desk-shadow);
+  font-size: 12px;
+  line-height: 1.6;
+}
+:root body :is([role=tooltip], .settings-tooltip),
+:root body #file-input-hint,
+:root body #toast { padding: 10px 12px; overflow-wrap: anywhere; }
+:root body :is(.account-menu, .context-menu) { padding: 6px; }
+
+:root body button:is(.icon, .icon-button) {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  filter: none;
+}
+/* Filled-action classes must not leave white icons on transparent light surfaces. */
+:root body button:is(.icon, .icon-button):is(.primary, .danger) { color: var(--desk-control-text); }
+:root body button:is(.icon, .icon-button):hover:not(:disabled) { background: var(--desk-hover); filter: none; }
+:root body button:is(.icon, .icon-button):focus-visible { outline: 1px solid var(--desk-control-focus); outline-offset: 2px; }
+:root body button:is(.icon, .icon-button):disabled { opacity: .5; cursor: default; }
+
+/* Opt in only boolean preferences; selection lists and confirmations remain checkboxes. */
+:root body :is(button, input)[role=switch] {
+  appearance: none;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 40px;
+  width: 40px;
+  min-width: 40px;
+  height: 24px;
+  min-height: 24px;
+  margin: 0;
+  padding: 3px;
+  border: 0;
+  border-radius: 999px;
+  background: #787c84;
+  cursor: pointer;
+  filter: none;
+  transition: background-color 180ms ease;
+}
+:root body :is(button, input)[role=switch]::after {
+  content: '';
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  pointer-events: none;
+  transform: translateX(0);
+  transition: transform 180ms cubic-bezier(.2,.7,.2,1);
+}
+:root body :is(button, input)[role=switch]:is([aria-checked=true], :checked) { background: #00b96b; }
+:root body :is(button, input)[role=switch]:is([aria-checked=true], :checked)::after { transform: translateX(16px); }
+:root body :is(button, input)[role=switch]:hover { filter: none; }
+:root body :is(button, input)[role=switch]:focus-visible { outline: 2px solid var(--desk-control-focus); outline-offset: 3px; }
+:root body :is(button, input)[role=switch]:disabled { opacity: .5; cursor: default; }
+:root body label:has(> input[role=switch]) { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 16px; }
+:root body label > input[role=switch] { order: 1; margin-left: auto; }
+@media (prefers-reduced-motion: reduce) {
+  :root body :is(button, input)[role=switch],
+  :root body :is(button, input)[role=switch]::after { transition: none; }
+}
+
+/* Functional surfaces use the account menu appearance, regardless of their content or icon density. */
+:root body :is(dialog, #settings-panel, .account-menu, .context-menu, #file-menu, .branch-manager) {
+  color: var(--desk-control-text);
+  background: var(--desk-surface);
+  border: 1px solid var(--desk-control-border);
+  border-radius: 12px;
+  box-shadow: var(--desk-shadow);
+}
+:root body :is(dialog.desk-popup, #settings-panel.desk-popup) {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  box-sizing: border-box;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  transform: none;
+}
+:root body :is(dialog, #settings-panel)::backdrop {
+  background: transparent;
+  backdrop-filter: none;
+}
+:root body :is(.desk-popup, .account-menu, .context-menu, #file-menu):is(:popover-open, [open]) {
+  animation: desk-popup-enter 160ms cubic-bezier(.2,.7,.2,1);
+}
+@keyframes desk-popup-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root body :is(.desk-popup, .account-menu, .context-menu, #file-menu):is(:popover-open, [open]) {
+    animation: none;
+  }
+}
+
+/* Shared user-intervention surface: content scrolls while the answer remains available. */
+:root body dialog.desk-intervention {
+  width: 760px;
+  padding: 24px 28px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.75;
+}
+:root body dialog.desk-intervention[open] { display: flex; flex-direction: column; gap: 18px; }
+:root body .desk-intervention-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--desk-muted); font-size: 12px; flex-shrink: 0; }
+:root body .desk-intervention-heading button { width: 28px; height: 28px; padding: 5px; }
+:root body .desk-intervention-heading svg { width: 18px; height: 18px; }
+:root body .desk-intervention-content { min-height: 0; overflow: auto; overflow-wrap: anywhere; white-space: normal; }
+:root body .desk-intervention-content > :first-child { margin-top: 0; }
+:root body .desk-intervention-content > :last-child { margin-bottom: 0; }
+:root body .desk-intervention-content :is(p, ul, ol, blockquote, pre, table) { margin: 0 0 16px; }
+:root body .desk-intervention-content :is(ul, ol) { padding-left: 24px; }
+:root body .desk-intervention-content li { padding-left: 3px; margin: 5px 0; }
+:root body .desk-intervention-content li > p { margin: 0; }
+:root body .desk-intervention-content strong { font-weight: 650; }
+:root body .desk-intervention-content :is(h1, h2, h3, h4, h5, h6) { font-size: 1.1em; line-height: 1.5; margin: 18px 0 10px; }
+:root body .desk-intervention-content blockquote { border-left: 3px solid var(--desk-control-border); padding-left: 14px; color: var(--desk-muted); }
+:root body .desk-intervention-content code { padding: 2px 5px; border-radius: 4px; background: var(--desk-control-bg); font-size: .9em; }
+:root body .desk-intervention-content pre { overflow: auto; padding: 12px; border-radius: 6px; background: var(--desk-control-bg); }
+:root body .desk-intervention-content pre code { padding: 0; white-space: pre; }
+:root body .desk-intervention-content table { border-collapse: collapse; max-width: 100%; font-size: 13px; }
+:root body .desk-intervention-content :is(td, th) { padding: 6px 10px; border: 1px solid var(--desk-control-border); text-align: left; }
+:root body .desk-intervention-content a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+:root body .desk-intervention-content hr { border: 0; border-top: 1px solid var(--desk-control-border); margin: 16px 0; }
+:root body .desk-intervention-composer { flex-shrink: 0; border: 1px solid var(--desk-control-border); border-radius: 10px; background: var(--desk-control-bg); overflow: hidden; }
+:root body .desk-intervention-composer:focus-within { border-color: var(--desk-control-focus); }
+:root body .desk-intervention-composer textarea:not(.xterm-helper-textarea, .cm-editor textarea, .monaco-editor textarea),
+:root body .desk-intervention-composer textarea:not(.xterm-helper-textarea, .cm-editor textarea, .monaco-editor textarea):focus {
+  display: block;
+  width: 100%;
+  min-height: 76px;
+  max-height: min(180px, 25vh);
+  margin: 0;
+  padding: 14px 16px 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--desk-control-text);
+  outline: none;
+  box-shadow: none;
+  resize: none;
+  font-family: inherit;
+  font-size: var(--desk-field-font-size, 14px);
+  line-height: var(--desk-field-line-height, 23.1px);
+}
+:root body .desk-intervention-composer textarea:not(.xterm-helper-textarea, .cm-editor textarea, .monaco-editor textarea):focus { font-size: calc(var(--desk-field-font-size, 14px) * 1.05); }
+:root body .desk-intervention-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 6px 10px 10px; }
+:root body .desk-intervention-actions button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 7px; margin: 0; }
+:root body .desk-intervention-actions button:first-child { margin-right: auto; color: var(--desk-muted); }
+:root body .desk-intervention-actions svg { width: 18px; height: 18px; }
+:root body .desk-intervention-actions button.desk-intervention-send,
+:root body .desk-intervention-actions button.desk-intervention-send:hover:not(:disabled) { border-radius: 8px; background: var(--desk-control-text); color: var(--desk-surface); }
+:root body .desk-intervention-actions button.desk-intervention-send:disabled { background: var(--desk-hover); color: var(--desk-muted); opacity: .65; }
+@media (max-width: 520px) {
+  :root body dialog.desk-intervention { padding: 18px; gap: 14px; }
+}
+
+/* Action menus use the account menu's readable icon-and-label rows, not toolbar-sized icon buttons. */
+:root .context-menu.desk-option-menu[role=menu] {
+  box-sizing: border-box;
+  min-width: 180px;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  padding: 6px;
+  gap: 2px;
+  flex-direction: column;
+}
+:root .desk-option-menu[role=menu] > [role=menuitem] {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 38px;
+  height: auto;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--desk-control-text);
+  text-align: left;
+  white-space: normal;
+  font: inherit;
+}
+:root .desk-option-menu[role=menu] > [role=menuitem]:not(:disabled):is(:hover, :focus-visible) {
+  background: var(--desk-hover);
+}
+:root .desk-option-menu[role=menu] > [role=menuitem] > svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

@@ -41,7 +41,13 @@ export class SessionCaptureClient {
         catch { warning = '原 Agent 目标已失联，原记录租约将在 20 秒内到期'; }
         this.enabled = false;
       }
-      const result = await this.invoke(target, 'configure', { enabled: input.enabled });
+      let result;
+      try {
+        result = await this.invoke(target, 'configure', { enabled: input.enabled });
+      } finally {
+        // Closing the final Agent window can remove its provider before the stop request arrives.
+        if (!input.enabled) { this.enabled = false; }
+      }
       this.target = { ...target };
       this.enabled = input.enabled;
       return { ...result, target: this.target, warning };

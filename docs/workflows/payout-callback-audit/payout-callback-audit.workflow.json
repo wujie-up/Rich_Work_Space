@@ -1,0 +1,149 @@
+{
+  "format": "deckpg.workflow",
+  "version": 1,
+  "workflow": {
+    "name": "每日10点 · 放款未回调订单巡检",
+    "group": "财务巡检",
+    "trigger": {
+      "mode": "daily",
+      "at": "10:00",
+      "timezone": "Asia/Shanghai",
+      "enabled": true
+    },
+    "nodes": [
+      {
+        "id": "start",
+        "type": "flow.start",
+        "title": "每日10点开始",
+        "params": {},
+        "x": 80,
+        "y": 120,
+        "width": 280,
+        "height": 130
+      },
+      {
+        "id": "snapshot",
+        "type": "payout.snapshot",
+        "title": "固定财务查询时间和最大ID",
+        "params": {
+          "serviceId": "",
+          "reportDirectory": "/Users/wujie/Library/Application Support/Work Desk/desktop-files"
+        },
+        "x": 420,
+        "y": 120,
+        "width": 280,
+        "height": 130
+      },
+      {
+        "id": "financial",
+        "type": "payout.financial",
+        "title": "财务查询：近1月 · 超时未回调",
+        "params": {
+          "serviceId": "",
+          "reportDirectory": "{{snapshot.reportDirectory}}",
+          "snapshot": "{{snapshot}}",
+          "timeoutHours": 6
+        },
+        "x": 760,
+        "y": 120,
+        "width": 280,
+        "height": 130
+      },
+      {
+        "id": "batch",
+        "type": "payout.batch",
+        "title": "按国家和渠道分组 · 申请单分批",
+        "params": {
+          "financial": "{{financial}}"
+        },
+        "x": 1100,
+        "y": 120,
+        "width": 280,
+        "height": 130
+      },
+      {
+        "id": "verify",
+        "type": "payout.verify",
+        "title": "各国库复核status=2 · 补渠道订单号",
+        "params": {
+          "serviceId": "",
+          "reportDirectory": "{{snapshot.reportDirectory}}",
+          "financial": "{{financial}}",
+          "groups": "{{batch.groups}}"
+        },
+        "x": 1440,
+        "y": 120,
+        "width": 280,
+        "height": 130
+      },
+      {
+        "id": "group",
+        "type": "payout.group",
+        "title": "按渠道 → 国家 → 订单汇总",
+        "params": {
+          "records": "{{verify.records}}"
+        },
+        "x": 1780,
+        "y": 120,
+        "width": 280,
+        "height": 130
+      },
+      {
+        "id": "markdown",
+        "type": "payout.markdown",
+        "title": "保存时间戳MD订单清单",
+        "params": {
+          "reportDirectory": "{{snapshot.reportDirectory}}",
+          "audit": "{{verify}}",
+          "channels": "{{group.channels}}"
+        },
+        "x": 2120,
+        "y": 120,
+        "width": 280,
+        "height": 130
+      },
+      {
+        "id": "notify",
+        "type": "output.feishu",
+        "title": "飞书机器人表格通知",
+        "params": {
+          "reportPath": "{{markdown.path}}"
+        },
+        "x": 2460,
+        "y": 120,
+        "width": 280,
+        "height": 130
+      }
+    ],
+    "edges": [
+      {
+        "from": "start",
+        "to": "snapshot"
+      },
+      {
+        "from": "snapshot",
+        "to": "financial"
+      },
+      {
+        "from": "financial",
+        "to": "batch"
+      },
+      {
+        "from": "batch",
+        "to": "verify"
+      },
+      {
+        "from": "verify",
+        "to": "group"
+      },
+      {
+        "from": "group",
+        "to": "markdown"
+      },
+      {
+        "from": "markdown",
+        "to": "notify"
+      }
+    ]
+  }
+}

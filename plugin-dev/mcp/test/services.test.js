@@ -7,6 +7,46 @@ import { McpServices } from '../src/main/common/services.js';
 const require = createRequire(import.meta.url);
 const load = name => import(pathToFileURL(require.resolve(name)).href);
 
+test('clear logs persists only the selected service and retains concurrent new entries', async t => {
+  const storage = await temporaryStore(t);
+  const services = new McpServices({ storage, pluginId: 'mcp-services', ownProcesses: () => {} });
+  t.after(() => services.close());
+  for (const id of ['selected', 'other']) {
+    await services.save({ id, name: id, transport: 'http', url: 'https://example.test/mcp' });
+  }
+  await Promise.all([...services.logWrites.values()]);
+  const before = await services.definitions();
+  const otherLogs = await services.logs('other');
+  await services.clearLogs('selected');
+  assert.equal(await services.logs('selected'), '');
+  const reloaded = new McpServices({ storage, pluginId: 'mcp-services', ownProcesses: () => {} });
+  assert.equal(await reloaded.logs('selected'), '');
+  assert.equal(await reloaded.logs('other'), otherLogs);
+  assert.deepEqual(await services.definitions(), before);
+  await assert.rejects(services.clearLogs('../unknown'), { code: 'SERVICE_NOT_FOUND' });
+
+  const writeJson = storage.writeJson.bind(storage);
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  let first = true;
+  storage.writeJson = async (key, value) => {
+    if (first && key.endsWith('/logs/selected.json')) {
+      first = false;
+      await blocked;
+    }
+    return writeJson(key, value);
+  };
+  services.log({ id: 'selected' }, 'info', 'before-clear');
+  const cleared = services.clearLogs('selected');
+  while (services.entries.get('selected')) { await new Promise(resolve => setImmediate(resolve)); }
+  services.log({ id: 'selected' }, 'info', 'after-clear');
+  release();
+  await cleared;
+  const persisted = await storage.readJson('plugin-data/mcp-services/logs/selected.json');
+  assert.doesNotMatch(persisted, /before-clear/);
+  assert.match(persisted, /after-clear/);
+});
+
 test('real stdio MCP tools, authenticated HTTP gateway and process cleanup', async t => {
   const storage = await temporaryStore(t);
   const pids = [];
@@ -16,6 +56,10 @@ test('real stdio MCP tools, authenticated HTTP gateway and process cleanup', asy
   await services.save({id:'echo',name:'Echo',transport:'stdio',command:process.execPath,
     args:[fileURLToPath(new URL('./fixture.mjs',import.meta.url))],env:{TEST_SECRET:'secret-do-not-log'}});
   await services.start('echo');
+  const runtime = services.running.get('echo');
+  await services.clearLogs('echo');
+  assert.equal(services.running.get('echo'), runtime);
+  assert.equal(await services.logs('echo'), '');
   assert.equal((await services.tools('echo')).tools[0].name,'echo');
   assert.equal((await services.call('echo','echo',{text:'direct'})).content[0].text,'direct');
   const connection = (await services.connections()).services[0];

@@ -1,5 +1,10 @@
 import { aggregate } from './metrics.js';
 
+// Node timers use a signed 32-bit millisecond delay.
+function validInterval(value) {
+  return Number.isInteger(value) && value >= 1 && value <= 2147483;
+}
+
 export class ResourceMonitor {
   constructor({ directory, platform, readSettings, writeSettings, schedule = setTimeout, cancel = clearTimeout }) {
     Object.assign(this, { directory, platform, readSettings, writeSettings, schedule, cancel });
@@ -14,7 +19,7 @@ export class ResourceMonitor {
       return;
     }
     const saved = await this.readSettings();
-    this.settings = { interval: [2, 5, 10].includes(saved.interval) ? saved.interval : 2,
+    this.settings = { interval: validInterval(saved.interval) ? saved.interval : 2,
       defaultCollapsed: saved.defaultCollapsed === true };
     this.running = true;
     this.timer = this.schedule(() => this.cycle(), 0);
@@ -64,14 +69,14 @@ export class ResourceMonitor {
     }
   }
 
-  snapshot() {
+  snapshot({ includeHistory = true } = {}) {
     return { version: 1, running: this.running, settings: { ...this.settings }, latest: this.latest || null,
-      history: this.history, error: this.error };
+      history: includeHistory ? this.history : [], error: this.error };
   }
 
   async updateSettings(change) {
-    if (!change || typeof change !== 'object' || (change.interval !== undefined && ![2, 5, 10].includes(change.interval))) {
-      throw Error('采样间隔只能为 2、5 或 10 秒');
+    if (!change || typeof change !== 'object' || (change.interval !== undefined && !validInterval(change.interval))) {
+      throw Error('采样间隔须为 1–2147483 s 的整数');
     }
     if (change.defaultCollapsed !== undefined && typeof change.defaultCollapsed !== 'boolean') {
       throw Error('默认收起状态无效');
@@ -79,7 +84,12 @@ export class ResourceMonitor {
     const next = { ...this.settings, ...Object.fromEntries(Object.entries(change).filter(([key]) =>
       ['interval', 'defaultCollapsed'].includes(key))) };
     await this.writeSettings(next);
+    const intervalChanged = next.interval !== this.settings.interval;
     this.settings = next;
+    if (intervalChanged && this.running && !this.inFlight) {
+      this.cancel(this.timer);
+      this.timer = this.schedule(() => this.cycle(), next.interval * 1000);
+    }
     return { ...next };
   }
 

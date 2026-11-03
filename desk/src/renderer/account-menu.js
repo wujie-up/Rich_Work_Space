@@ -1,9 +1,10 @@
-import { el, run, toast } from './ui.js';
+import { positionPopup } from '../resource/popup.js';
+import { api, el, run, toast } from './ui.js';
 import { dismissMenu } from './launcher.js';
 
 const symbols = {
   user: ['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0'],
-  plugins: ['M9 3h6v5h5v6h-5v7H9v-7H4V8h5Z'],
+  plugins: ['M9 6V5a3 3 0 0 1 6 0v1h3a2 2 0 0 1 2 2v2h-1a3 3 0 0 0 0 6h1v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z'],
   settings: ['M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1Z', 'M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0'],
   language: ['M3 5h12M9 3v2M5 5c0 6 4 9 9 11M13 5c0 6-4 9-10 12', 'm13 21 4-11 4 11M15 17h4'],
   chevron: ['m9 5 7 7-7 7'],
@@ -44,11 +45,8 @@ export function mountAccountMenu(surface, configure, changeLanguage) {
     clearTimeout(hideTimer);
     menu.hidePopover();
   };
-  const position = () => {
-    const rect = footer.getBoundingClientRect();
-    menu.style.left = `${rect.right + 8}px`;
-    menu.style.top = `${Math.max(8, Math.min(rect.bottom - menu.offsetHeight, innerHeight - menu.offsetHeight - 8))}px`;
-  };
+  const position = () => positionPopup(menu, trigger);
+
   const languages = el('div', { id: 'language-menu', class: 'account-menu language-menu', popover: 'auto',
     role: 'menu', 'aria-label-message': '语言' });
   const languageItem = el('button', { role: 'menuitem', 'title-message': '语言', 'aria-haspopup': 'menu',
@@ -58,12 +56,7 @@ export function mountAccountMenu(surface, configure, changeLanguage) {
       node.setAttribute('aria-checked', String(node.dataset.language === document.documentElement.lang));
     });
     languages.showPopover();
-    const rect = languageItem.getBoundingClientRect();
-    const right = menu.offsetLeft + menu.offsetWidth;
-    // Layout coordinates keep the submenu anchored while its parent animates into place.
-    languages.style.left = `${right + languages.offsetWidth + 6 <= innerWidth
-      ? right + 4 : Math.max(4, menu.offsetLeft - languages.offsetWidth - 4)}px`;
-    languages.style.top = `${Math.max(4, Math.min(rect.top - 6, innerHeight - languages.offsetHeight - 4))}px`;
+    positionPopup(languages, languageItem);
   };
   languageItem.addEventListener('click', openLanguages);
   languageItem.addEventListener('mouseenter', openLanguages);
@@ -99,7 +92,7 @@ export function mountAccountMenu(surface, configure, changeLanguage) {
     }
   });
   for (const [symbol, label, action] of [
-    ['user', '游客', () => toast('当前为游客，登录功能后续开放')],
+    ['user', api.host.username || '游客', () => api.host.browser ? api.host.logout() : toast('当前为游客，登录功能后续开放')],
     ['plugins', '插件', configure],
     ['settings', '设置', configure],
     ['language', '语言', null],

@@ -7,7 +7,7 @@ export class ClaudeEngine extends AppServer {
     this.threadId = launch.threadId || randomUUID();
     this.toolRequests = new Map();
     const args = ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
-      '--include-partial-messages', '--permission-prompt-tool=stdio', '--permission-mode', launch.plan ? 'plan' : 'default',
+      '--include-partial-messages', '--permission-prompt-tool=stdio', '--permission-mode', launch.fullyAuthorized ? 'bypassPermissions' : launch.plan ? 'plan' : 'default',
       '--setting-sources', 'user,project,local', '--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers: launch.gateway ? {
         work_desk: { type: 'http', url: launch.gateway.url, headers: { Authorization: `Bearer ${launch.gateway.token}` } }
       } : {} }), launch.resume ? '--resume' : '--session-id', this.threadId];
@@ -41,7 +41,13 @@ export class ClaudeEngine extends AppServer {
     return super.request(method, params, timeoutMs);
   }
 
+  nativeEvent(event) {
+    this.onEvent({ ...event, params: { ...event.params, threadId: this.threadId, turnId: this.turnId } });
+  }
+
   receive(message) {
+    // Child-agent output cannot complete or supply the answer for the parent conversation.
+    if (message.parent_tool_use_id && ['assistant', 'stream_event', 'result'].includes(message.type)) { return; }
     if (message.type === 'control_response') {
       return super.receive({ id: Number(message.response.request_id), result: message.response.response,
         ...(message.response.subtype === 'error' ? { error: { message: message.response.error } } : {}) });
@@ -55,35 +61,36 @@ export class ClaudeEngine extends AppServer {
       this.toolRequests ||= new Map();
       this.toolRequests.set(message.request_id, message.request);
       if (message.request.tool_name === 'AskUserQuestion') {
-        this.onEvent({ id: message.request_id, method: 'item/tool/requestUserInput', params: {
+        this.nativeEvent({ id: message.request_id, method: 'item/tool/requestUserInput', params: {
           questions: message.request.input.questions.map((question, index) => ({ ...question, id: String(index) }))
         } });
         return;
       }
-      this.onEvent({ id: message.request_id, method: 'item/commandExecution/requestApproval', params: {
+      this.nativeEvent({ id: message.request_id, method: 'item/commandExecution/requestApproval', params: {
         command: `${message.request.tool_name}: ${JSON.stringify(message.request.input)}`, reason: message.request.decision_reason
       } });
     } else if (message.type === 'control_cancel_request') {
       this.toolRequests.delete(message.request_id);
-      this.onEvent({ method: 'item/completed', params: { item: { type: 'approvalCancelled', requestId: message.request_id } } });
+      this.nativeEvent({ method: 'item/completed', params: { item: { type: 'approvalCancelled', requestId: message.request_id } } });
     } else if (message.type === 'stream_event' && message.event.type === 'content_block_delta' && message.event.delta.type === 'text_delta') {
       this.streamed = true;
-      this.onEvent({ method: 'item/agentMessage/delta', params: { itemId: this.messageId, delta: message.event.delta.text } });
+      this.nativeEvent({ method: 'item/agentMessage/delta', params: { itemId: this.messageId, delta: message.event.delta.text } });
     } else if (message.type === 'assistant') {
       for (const item of message.message.content) {
         if (item.type === 'text' && !this.streamed) {
-          this.onEvent({ method: 'item/completed', params: { item: { type: 'agentMessage', id: message.uuid, text: item.text } } });
+          this.nativeEvent({ method: 'item/completed', params: { item: { type: 'agentMessage', id: message.uuid, text: item.text } } });
         } else if (item.type === 'tool_use') {
-          this.onEvent({ method: 'item/completed', params: { item: { type: 'toolCall', name: item.name, input: item.input } } });
+          this.nativeEvent({ method: 'item/completed', params: { item: { type: 'toolCall', name: item.name, input: item.input } } });
         }
       }
       this.streamed = false;
       this.messageId = randomUUID();
     } else if (message.type === 'result') {
       if (message.is_error) {
-        this.onEvent({ method: 'error', params: { message: 'Claude 执行失败，请检查授权、网络和额度。' } });
+        this.nativeEvent({ method: 'error', params: { message: 'Claude 执行失败，请检查授权、网络和额度。' } });
       }
-      this.onEvent({ method: 'turn/completed', params: { turn: { id: this.turnId, status: message.is_error ? 'failed' : 'completed' } } });
+      this.nativeEvent({ method: 'turn/completed', params: { turn: { id: this.turnId, status: message.is_error ? 'failed' : 'completed',
+        items: typeof message.result === 'string' ? [{ type: 'agentMessage', id: message.uuid || this.messageId, phase: 'final_answer', text: message.result }] : [] } } });
     }
   }
 

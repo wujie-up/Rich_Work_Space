@@ -19,6 +19,10 @@ export function activate(c) {
  c.views.register({id:'view',title:'Test',entry:'index.html'});
 }
 export function deactivate() {if (context.pluginId==='retry-plugin' && attempts++===0) throw Error('deactivate failed');}`;
+async function installEnabled(plugins, source) {
+  const record = await plugins.install(source);
+  await plugins.enable(record.id);
+}
 async function setup(t, id = 'test-agent', options = {}) {
   const storage = await temporaryStore(t);
   const plugins = new Plugins({ storage, ...options });
@@ -29,7 +33,7 @@ async function setup(t, id = 'test-agent', options = {}) {
   });
   const source = await fixture(storage, id);
   await writeFile(join(source, 'index.mjs'), implementation);
-  await plugins.install(source);
+  await installEnabled(plugins, source);
   return { storage, plugins, source };
 }
 async function ready(plugins, id) {
@@ -37,6 +41,39 @@ async function ready(plugins, id) {
     await delay(10);
   }
 }
+
+test('deferred startup shares activation with clicks and isolates slow and failing services', async t => {
+  const storage = await temporaryStore(t);
+  const starts = [];
+  const plugins = new Plugins({ storage, runtimeFactory: options => {
+    starts.push(options.id);
+    return new PluginRuntime(options);
+  } });
+  t.after(() => plugins.forceQuit());
+  for (const id of ['slow-service', 'failed-service', 'ready-service']) {
+    const source = await fixture(storage, id);
+    const code = id === 'slow-service'
+      ? "export async function activate() { await new Promise(resolve => setTimeout(resolve, 400)); }"
+      : id === 'failed-service' ? "export function activate() { throw Error('startup failure'); }" : 'export function activate() {}';
+    await writeFile(join(source, 'index.mjs'), `${code} export function deactivate() {}`);
+    await plugins.install(source);
+    plugins.record(id).state = 'enabled';
+  }
+  await plugins.persist();
+  await plugins.load({ deferServices: true });
+  assert.equal(starts.length, 0);
+  const startup = plugins.startServices();
+  const clicked = plugins.ensureRuntime('slow-service');
+  await plugins.ensureRuntime('ready-service');
+  assert.equal(plugins.loaded.has('slow-service'), false);
+  assert.equal(plugins.loaded.has('ready-service'), true);
+  await Promise.all([startup, clicked]);
+  assert.equal(starts.filter(id => id === 'slow-service').length, 1);
+  assert.equal(plugins.record('failed-service').state, 'disabled');
+  assert.match(plugins.record('failed-service').lastError.message, /startup failure/);
+  assert.equal(plugins.loaded.has('ready-service'), true);
+  assert.equal(plugins.loaded.has('slow-service'), true);
+});
 
 test('force quit bypasses a hung snapshot and preserves enabled records and saved data', async (t) => {
   const { plugins, storage } = await setup(t);
@@ -62,7 +99,8 @@ test('force quit also terminates a plugin frozen during activation', async (t) =
   t.after(async () => { await runtime?.close(); });
   const source = await fixture(storage, 'frozen-start');
   await writeFile(join(source, 'index.mjs'), 'export function activate() { while (true) {} }');
-  const installing = plugins.install(source).catch(error => error.code);
+  await plugins.install(source);
+  const installing = plugins.enable('frozen-start').catch(error => error.code);
   while (!runtime) {
     await delay(10);
   }
@@ -97,7 +135,7 @@ test('keep tombstone survives restart; clear failure is visible and retryable', 
   const restarted = new Plugins({ storage, builtins: [source] });
   await restarted.load();
   assert.equal(restarted.record('test-agent').state, 'uninstalled');
-  await plugins.install(source);
+  await installEnabled(plugins, source);
   assert.equal((await storage.readJson('plugin-data/test-agent/closed.json')).tasks[0].name, 'retained');
   const clear = storage.clearPluginData.bind(storage);
   storage.clearPluginData = async () => { throw Error('disk failure'); };
@@ -144,7 +182,8 @@ test('activation failure is contained; API 1 is rejected without running its ent
   const { storage, plugins } = await setup(t);
   const source = await fixture(storage, 'broken-agent');
   await writeFile(join(source, 'index.mjs'), 'export function activate(){throw Error("activate failed");} export function deactivate(){}');
-  await assert.rejects(plugins.install(source), /activate failed/);
+  await plugins.install(source);
+  await assert.rejects(plugins.enable('broken-agent'), /activate failed/);
   assert.equal(plugins.loaded.has('broken-agent'), false);
   assert.equal(plugins.record('broken-agent').state, 'disabled');
   assert.equal(await plugins.invoke('test-agent', 'tasks.ping'), 'pong');
@@ -159,7 +198,7 @@ test('real plugin process exit and infinite loop do not stop another plugin; res
   });
   const source = await fixture(storage, 'crash-plugin');
   await writeFile(join(source, 'index.mjs'), implementation);
-  await plugins.install(source);
+  await installEnabled(plugins, source);
   const healthyPid = plugins.loaded.get('healthy-plugin').child.pid;
   const crashPid = plugins.loaded.get('crash-plugin').child.pid;
   assert.notEqual(healthyPid, crashPid);
@@ -211,7 +250,7 @@ test('invalid plugin process payload stays inside its worker', async (t) => {
     c.methods.register('broken.call',()=>c.ownProcesses(null));
     c.methods.register('broken.raw',()=>process.send({type:'processes',pids:null}));
   } export function deactivate(){}`);
-  await plugins.install(source);
+  await installEnabled(plugins, source);
   await assert.rejects(plugins.invoke('bad-payload', 'broken.call'), /进程列表无效/);
   await assert.rejects(plugins.invoke('bad-payload', 'broken.raw'), { code: 'PLUGIN_PROTOCOL_ERROR' });
   await ready(plugins, 'bad-payload');
@@ -269,7 +308,7 @@ test('opaque resource coordination blocks busy peers and writes during exclusive
   for (const id of ['first-resource', 'second-resource']) {
     const source = await fixture(storage, id);
     await writeFile(join(source, 'index.mjs'), sourceCode);
-    await plugins.install(source);
+    await installEnabled(plugins, source);
   }
   await plugins.invoke('first-resource', 'resource.busy', ['worktree-a', true]);
   await assert.rejects(plugins.invoke('second-resource', 'resource.switch', ['worktree-a']), { code: 'RESOURCE_BUSY' });
@@ -289,7 +328,7 @@ test('force disable bypasses an unresponsive plugin and preserves its data and a
   const { plugins, storage } = await setup(t, 'stuck-plugin');
   const other = await fixture(storage, 'healthy-plugin');
   await writeFile(join(other, 'index.mjs'), implementation);
-  await plugins.install(other);
+  await installEnabled(plugins, other);
   await storage.writeJson('plugin-data/stuck-plugin/retained.json', { history: 'keep' });
   const runtime = plugins.loaded.get('stuck-plugin');
   const hanging = plugins.invoke('stuck-plugin', 'tasks.hang').catch(error => error.code);
@@ -307,7 +346,7 @@ test('force disable interrupts a stuck graceful transition instead of leaving it
   const { plugins, storage } = await setup(t, 'stuck-stop');
   const source = await fixture(storage, 'stuck-stop-hook');
   await writeFile(join(source, 'index.mjs'), implementation.replace('stop:async(reason)=>{', 'stop:async(reason)=>{while(true){};'));
-  await plugins.install(source);
+  await installEnabled(plugins, source);
   const preview = await plugins.preview('stuck-stop-hook', 'disable');
   const disabling = plugins.disable('stuck-stop-hook', preview.confirmationToken).catch(error => error.code);
   await delay(100);
@@ -356,7 +395,7 @@ test('force close interrupts a stuck close callback and retains enabled state', 
   const { plugins, storage } = await setup(t);
   const source = await fixture(storage, 'stuck-close-hook');
   await writeFile(join(source, 'index.mjs'), implementation.replace('stop:async(reason)=>{', 'stop:async(reason)=>{while(true){};'));
-  await plugins.install(source);
+  await installEnabled(plugins, source);
   const preview = await plugins.preview('stuck-close-hook', 'close');
   const closing = plugins.close('stuck-close-hook', preview.confirmationToken).catch(error => error.code);
   await delay(100);
@@ -374,7 +413,7 @@ test('force close during lazy activation keeps the plugin enabled after activati
   await writeFile(join(source, 'plugin.json'), JSON.stringify({ id: 'frozen-lazy', name: 'Lazy', version: '1.0.0',
     apiVersion: 2, dataVersion: 1, main: 'index.mjs', loadOnStartup: false }));
   await writeFile(join(source, 'index.mjs'), 'export function activate() { while (true) {} }');
-  await plugins.install(source);
+  await installEnabled(plugins, source);
   const activating = plugins.invoke('frozen-lazy', 'tasks.ping').catch(error => error.code);
   for (let attempt = 0; attempt < 200 && !plugins.recovering.has('frozen-lazy'); attempt++) {
     await delay(10);
@@ -384,4 +423,79 @@ test('force close during lazy activation keeps the plugin enabled after activati
   assert.equal(plugins.record('frozen-lazy').state, 'enabled');
   assert.equal(plugins.loaded.has('frozen-lazy'), false);
   assert.equal(plugins.recovering.has('frozen-lazy'), false);
+});
+
+test('worker SIGKILL cleans ordinary background descendants without touching another plugin or its data', async t => {
+  const { plugins, storage } = await setup(t);
+  const source = await fixture(storage, 'owned-process-probe');
+  await writeFile(join(source, 'index.mjs'), `import { spawn } from 'node:child_process';
+    export function activate(c) {
+      c.methods.register('probe.spawn', async () => {
+        const child = spawn(process.execPath, ['-e',
+          "const child=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});process.send(child.pid);setInterval(()=>{},1000)"
+        ], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+        c.ownProcesses([child.pid]);
+        const descendant = await new Promise(resolve => child.once('message', resolve));
+        return { child: child.pid, descendant };
+      });
+    } export function deactivate() {}`);
+  await installEnabled(plugins, source);
+  await storage.writeJson('plugin-data/owned-process-probe/history.json', { retained: true });
+  const pids = await plugins.invoke('owned-process-probe', 'probe.spawn');
+  t.after(() => Object.values(pids).forEach(pid => {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch (error) {
+      if (error.code !== 'ESRCH') {
+        throw error;
+      }
+    }
+  }));
+  plugins.loaded.get('owned-process-probe').child.kill('SIGKILL');
+  while (plugins.loaded.has('owned-process-probe')) {
+    await delay(10);
+  }
+  await ready(plugins, 'owned-process-probe');
+  const { execFileSync } = await import('node:child_process');
+  const remaining = execFileSync('ps', ['-axo', 'pid=,stat='], { encoding: 'utf8' }).trim().split('\n')
+    .map(line => line.trim().split(/\s+/)).filter(([pid, state]) => Object.values(pids).includes(Number(pid)) && !state.startsWith('Z'));
+  assert.deepEqual(remaining, [], 'all ordinary descendants must exit after their worker crashes');
+  assert.equal(plugins.recovering.has('owned-process-probe'), false);
+  assert.equal(await plugins.invoke('test-agent', 'tasks.ping'), 'pong');
+  assert.deepEqual(await storage.readJson('plugin-data/owned-process-probe/history.json'), { retained: true });
+});
+
+test('detached worker channels are runtime bound and do not relax service call ancestry', async t => {
+  const storage = await temporaryStore(t);
+  const plugins = new Plugins({ storage });
+  t.after(() => plugins.forceQuit());
+  const source = await fixture(storage, 'test-agent');
+  await writeFile(join(source, 'index.mjs'), `export function activate(c) {
+    c.methods.register('channel', (action, input) => new Promise((resolve, reject) => {
+      setImmediate(() => c.host.channels[action](input).then(resolve, reject));
+    }));
+    c.methods.register('detached', () => new Promise(resolve => setTimeout(() => {
+      c.services.discover('no-service').then(resolve, e => resolve(e.code));
+    }, 30)));
+  } export function deactivate() {}`);
+  // Install through the normal package boundary rather than editing an installed runtime.
+  await plugins.install(source);
+  await plugins.enable('test-agent');
+  await plugins.invoke('test-agent', 'channel', ['register', { endpointId: 'one' }]);
+  await plugins.invoke('test-agent', 'channel', ['register', { endpointId: 'two' }]);
+  const message = await plugins.invoke('test-agent', 'channel', ['send', {
+    endpointId: 'one', targetId: 'two', requestId: 'ipc-one', text: 'hello'
+  }]);
+  assert.equal(message.status, 'pending');
+  assert.equal((await plugins.invoke('test-agent', 'channel', ['inbox', { endpointId: 'two' }]))[0].text, 'hello');
+  const old = plugins.loaded.get('test-agent');
+  const preview = await plugins.preview('test-agent', 'disable');
+  await plugins.disable('test-agent', preview.confirmationToken);
+  assert.equal(old.closed, true);
+  await plugins.enable('test-agent');
+  assert.deepEqual(await plugins.invoke('test-agent', 'channel', ['list', {}]), []);
+  await plugins.invoke('test-agent', 'channel', ['register', { endpointId: 'two' }]);
+  assert.equal((await plugins.invoke('test-agent', 'channel', ['inbox', { endpointId: 'two' }]))[0].messageId, message.messageId);
+  assert.equal(await plugins.serviceRequest({ action: 'discover', input: 'no-service' }, undefined,
+    plugins.loaded.get('test-agent')).catch(e => e.code), 'SERVICE_UNAVAILABLE');
 });

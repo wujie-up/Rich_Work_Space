@@ -6,7 +6,8 @@ import { XMLValidator } from 'fast-xml-parser';
 export function formatText(text, type) {
   if (type === 'json' || type === 'jsonc') {
     const errors = [];
-    parse(text, errors, { allowTrailingComma: type === 'jsonc', disallowComments: type === 'json' });
+    // Both extensions share JSONC-compatible editing without discarding comments on format.
+    parse(text, errors, { allowTrailingComma: true, disallowComments: false });
     if (errors.length) { throw Error(`JSON 格式错误，位置 ${errors[0].offset}`); }
     // Format source tokens rather than parsed numbers to retain large integer precision.
     return applyEdits(text, format(text, undefined, { insertSpaces: true, tabSize: 2, eol: '\n' }));
